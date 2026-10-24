@@ -1,0 +1,27 @@
+# Binaries and build outputs
+/bin/
+bin/
+/server
+/simulator
+/verify
+*.exe
+*.test
+coverage.out
+
+# Environment variables
+.env
+.env.local
+
+# Node and Frontend
+node_modules/
+web/node_modules/
+web/dist/
+.npm
+.pnpm-store/
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
