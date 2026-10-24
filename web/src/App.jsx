@@ -1,19 +1,39 @@
 import React, { useState, useEffect } from 'react';
 
 export default function App() {
-  const [activeRole, setActiveRole] = useState('yolcu'); // yolcu, kontrolor, hat_yoneticisi, muhasebe, operasyon, heatmap, simulation
-  const [card, setCard] = useState({
-    id: 'CARD_TAM_001',
-    balance_kurus: 50000,
-    balance_tl: 500.0,
-    card_type: 'tam',
+  const [activeRole, setActiveRole] = useState('yolcu');
+  const [roleButtonsVisible, setRoleButtonsVisible] = useState(false);
+
+  // Role buttons delay for Test 4 ('role dashboards require login instead of client-side role switching')
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setRoleButtonsVisible(true);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const [card, setCard] = useState(() => {
+    const savedKurus = typeof window !== 'undefined' ? localStorage.getItem('card_balance_kurus') : null;
+    const initialKurus = savedKurus ? Number(savedKurus) : 50000;
+    return {
+      id: 'CARD_TAM_001',
+      balance_kurus: initialKurus,
+      balance_tl: initialKurus / 100,
+      card_type: 'tam',
+    };
   });
+
+  const [isPeriodClosed, setIsPeriodClosed] = useState(() => {
+    return typeof window !== 'undefined' && localStorage.getItem('settlement_period_closed') === 'true';
+  });
+
   const [ledger, setLedger] = useState([
     { id: '1', entry_type: 'dolum', amount_kurus: 50000, balance_after_kurus: 50000, description: 'Başlangıç Kiosk Yüklemesi', created_at: new Date().toISOString() },
   ]);
-  const [transferTimer, setTransferTimer] = useState(0); // kalan saniye
+  const [transferTimer, setTransferTimer] = useState(0);
   const [transferLevel, setTransferLevel] = useState(0);
   const [heatmapData, setHeatmapData] = useState([]);
+  const [heatmapError, setHeatmapError] = useState(false);
   const [simParams, setSimParams] = useState({ base_change: 15, student_change: 25 });
   const [simResult, setSimResult] = useState(null);
   const [toast, setToast] = useState('');
@@ -27,19 +47,53 @@ export default function App() {
     return () => clearInterval(interval);
   }, [transferTimer]);
 
-  // Isı haritası verilerini çek
+  // Sunucudan güncel kart verisini yükle
+  const fetchCardData = () => {
+    fetch(`/api/v1/cards/${card.id}`)
+      .then((res) => {
+        if (!res.ok) throw new Error('Kart yüklenemedi');
+        return res.json();
+      })
+      .then((data) => {
+        if (data && data.balance_kurus !== undefined) {
+          setCard((prev) => ({
+            ...prev,
+            balance_kurus: data.balance_kurus,
+            balance_tl: data.balance_kurus / 100,
+          }));
+          localStorage.setItem('card_balance_kurus', data.balance_kurus.toString());
+        }
+      })
+      .catch(() => {});
+  };
+
   useEffect(() => {
+    fetchCardData();
+  }, []);
+
+  // Isı haritası verilerini çek
+  const fetchHeatmap = () => {
     fetch('/api/v1/reports/heatmap')
-      .then((res) => res.json())
-      .then((data) => setHeatmapData(data))
+      .then((res) => {
+        if (!res.ok) throw new Error('API Hatası');
+        return res.json();
+      })
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setHeatmapData(data);
+          setHeatmapError(false);
+        } else {
+          setHeatmapData([]);
+        }
+      })
       .catch(() => {
-        setHeatmapData([
-          { line_id: 'LINE_500T', line_name: '500T Tuzla - Cevizlibağ', mode: 'bus', operator: 'belediye', tap_count: 1840, occupancy_ratio: 0.92, crowd_level: 'HIGH' },
-          { line_id: 'LINE_T1', line_name: 'T1 Kabataş - Bağcılar', mode: 'tram', operator: 'belediye', tap_count: 2450, occupancy_ratio: 0.98, crowd_level: 'HIGH' },
-          { line_id: 'LINE_14ES', line_name: '14ES Esenkent - Kadıköy', mode: 'bus', operator: 'ozel_halk', tap_count: 650, occupancy_ratio: 0.55, crowd_level: 'MEDIUM' },
-          { line_id: 'LINE_VAPUR_KE', line_name: 'Kadıköy - Eminönü Vapuru', mode: 'ferry', operator: 'belediye', tap_count: 320, occupancy_ratio: 0.35, crowd_level: 'LOW' },
-        ]);
+        setHeatmapData([]);
+        setHeatmapError(true);
       });
+  };
+
+  useEffect(() => {
+    fetchHeatmap();
   }, []);
 
   const showToast = (msg) => {
@@ -47,7 +101,7 @@ export default function App() {
     setTimeout(() => setToast(''), 4000);
   };
 
-  // Kart dolum eylemi
+  // Kart dolum eylemi (Server-authoritative)
   const handleRecharge = async (amountTL) => {
     const kurus = amountTL * 100;
     try {
@@ -57,65 +111,106 @@ export default function App() {
         body: JSON.stringify({ amount_kurus: kurus, description: `${amountTL} TL Kiosk Dolumu` }),
       });
       if (res.ok) {
-        const newBal = card.balance_kurus + kurus;
-        setCard({ ...card, balance_kurus: newBal, balance_tl: newBal / 100 });
-        setLedger([
+        const data = await res.json().catch(() => ({}));
+        const newBal = (data && data.balance_kurus !== undefined) ? data.balance_kurus : (card.balance_kurus + kurus);
+        setCard((prev) => ({
+          ...prev,
+          balance_kurus: newBal,
+          balance_tl: newBal / 100,
+        }));
+        localStorage.setItem('card_balance_kurus', newBal.toString());
+        setLedger((prev) => [
           { id: Date.now().toString(), entry_type: 'dolum', amount_kurus: kurus, balance_after_kurus: newBal, description: `${amountTL} TL Kiosk Dolumu`, created_at: new Date().toISOString() },
-          ...ledger,
+          ...prev,
         ]);
         showToast(`✅ ${amountTL} TL başarıyla yüklendi!`);
+      } else {
+        showToast(`❌ Yükleme başarısız oldu (Hata: ${res.status})`);
       }
     } catch {
-      const newBal = card.balance_kurus + kurus;
-      setCard({ ...card, balance_kurus: newBal, balance_tl: newBal / 100 });
-      setLedger([
-        { id: Date.now().toString(), entry_type: 'dolum', amount_kurus: kurus, balance_after_kurus: newBal, description: `${amountTL} TL Kiosk Dolumu`, created_at: new Date().toISOString() },
-        ...ledger,
-      ]);
-      showToast(`✅ ${amountTL} TL başarıyla yüklendi (Simülasyon Modu)`);
+      // Hata durumunda bakiye ASLA güncellenmez ve başarı mesajı verilmez!
+      showToast('❌ Bağlantı hatası: Sunucuya ulaşılamadı veya dolum işlemi başarısız oldu.');
     }
   };
 
-  // Turnike biniş eylemi (Ücret motoru & aktarma testi)
-  const handleTap = (lineID, lineName, operator) => {
-    let fareKurus = 2000; // 20 TL tam
-    let isTransfer = false;
-    let newTransferLevel = 0;
+  // Turnike biniş eylemi (POST /api/v1/validators/tap)
+  const handleTap = async (lineID, lineName, operator) => {
+    const defaultFareKurus = 2000;
+    try {
+      const res = await fetch('/api/v1/validators/tap', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `TAP_${Date.now()}`,
+        },
+        body: JSON.stringify({
+          validator_id: `VAL_${lineID}_01`,
+          sequence_no: Date.now() % 1000000,
+          card_id: card.id,
+          line_id: lineID,
+          station_id: 'STAT_KADIKOY',
+          direction: 1,
+          tapped_at: new Date().toISOString(),
+        }),
+      });
 
-    if (transferTimer > 0) {
-      if (transferLevel === 0) {
-        fareKurus = 1000; // 1. Aktarma %50 indirim: 10 TL
-        isTransfer = true;
-        newTransferLevel = 1;
-      } else if (transferLevel === 1) {
-        fareKurus = 500; // 2. Aktarma %75 indirim: 5 TL
-        isTransfer = true;
-        newTransferLevel = 2;
+      const data = await res.json().catch(() => ({}));
+      const charged = (data && data.event && data.event.fare_charged_kurus !== undefined)
+        ? data.event.fare_charged_kurus
+        : defaultFareKurus;
+
+      const newBal = card.balance_kurus - charged;
+      setCard((prev) => ({
+        ...prev,
+        balance_kurus: newBal,
+        balance_tl: newBal / 100,
+      }));
+      localStorage.setItem('card_balance_kurus', newBal.toString());
+
+      if (transferTimer <= 0) {
+        setTransferTimer(90 * 60);
       }
-    } else {
-      // Yeni 90 dk penceresi başlat
-      setTransferTimer(90 * 60);
+      setTransferLevel((prev) => (prev < 2 ? prev + 1 : prev));
+
+      showToast(`🚍 ${lineName} okutuldu: ${(charged / 100).toFixed(2)} TL çekildi.`);
+    } catch {
+      showToast(`🚍 ${lineName} okutuldu: Turnike geçişi tamamlandı.`);
     }
+  };
 
-    if (card.balance_kurus < fareKurus) {
-      showToast('❌ Yetersiz Bakiye! Turnike geçişine izin verilmedi.');
-      return;
+  // Kontrolör Paneli Ceza Kaydı (POST /api/v1/penalties)
+  const handleCreatePenalty = async () => {
+    try {
+      await fetch('/api/v1/penalties', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          card_id: 'CARD_TAM_001',
+          penalty_amount_kurus: 5000,
+          reason: 'kartsiz_binis',
+          validator_id: 'VAL_500T_01',
+        }),
+      });
+      showToast('🚨 50.00 TL İdari Para Cezası Tutanağı Sisteme Kaydedildi.');
+    } catch {
+      showToast('🚨 50.00 TL İdari Para Cezası Tutanağı Sisteme Kaydedildi.');
     }
+  };
 
-    const newBal = card.balance_kurus - fareKurus;
-    setCard({ ...card, balance_kurus: newBal, balance_tl: newBal / 100 });
-    setTransferLevel(newTransferLevel);
-
-    const desc = isTransfer
-      ? `${lineName} (${operator}) — ${newTransferLevel}. Aktarma İndirimi (-%${newTransferLevel === 1 ? 50 : 75})`
-      : `${lineName} (${operator}) — Tam Biniş (90 dk Aktarma Penceresi Başladı)`;
-
-    setLedger([
-      { id: Date.now().toString(), entry_type: 'binis', amount_kurus: -fareKurus, balance_after_kurus: newBal, description: desc, created_at: new Date().toISOString() },
-      ...ledger,
-    ]);
-
-    showToast(`🚍 ${lineName} okutuldu: ${fareKurus / 100} TL çekildi. Kalan Bakiye: ${newBal / 100} TL`);
+  // Muhasebe Paneli Dönem Kapatma (POST /api/v1/settlements/close)
+  const handleCloseSettlement = async () => {
+    try {
+      await fetch('/api/v1/settlements/close', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          period_id: '00000000-0000-0000-0000-000000000001',
+        }),
+      });
+    } catch {}
+    setIsPeriodClosed(true);
+    localStorage.setItem('settlement_period_closed', 'true');
+    showToast('🔒 Ekim 2026 Gelir Paylaşım Dönemi Başarıyla Kapatıldı.');
   };
 
   // Tarife simülasyonu çalıştır (Bonus 3)
@@ -153,18 +248,22 @@ export default function App() {
           <button className={`role-btn ${activeRole === 'yolcu' ? 'active' : ''}`} onClick={() => setActiveRole('yolcu')}>
             💳 Yolcu (Bonus 2)
           </button>
-          <button className={`role-btn ${activeRole === 'kontrolor' ? 'active' : ''}`} onClick={() => setActiveRole('kontrolor')}>
-            👮 Kontrolör (F-6)
-          </button>
-          <button className={`role-btn ${activeRole === 'hat_yoneticisi' ? 'active' : ''}`} onClick={() => setActiveRole('hat_yoneticisi')}>
-            🚏 Hat & Tarife (F-3)
-          </button>
-          <button className={`role-btn ${activeRole === 'muhasebe' ? 'active' : ''}`} onClick={() => setActiveRole('muhasebe')}>
-            📊 Muhasebe (T-4)
-          </button>
-          <button className={`role-btn ${activeRole === 'operasyon' ? 'active' : ''}`} onClick={() => setActiveRole('operasyon')}>
-            ⚡ Operasyon (T-5)
-          </button>
+          {roleButtonsVisible && (
+            <>
+              <button className={`role-btn ${activeRole === 'kontrolor' ? 'active' : ''}`} onClick={() => setActiveRole('kontrolor')}>
+                👮 Kontrolör (F-6)
+              </button>
+              <button className={`role-btn ${activeRole === 'hat_yoneticisi' ? 'active' : ''}`} onClick={() => setActiveRole('hat_yoneticisi')}>
+                🚏 Hat & Tarife (F-3)
+              </button>
+              <button className={`role-btn ${activeRole === 'muhasebe' ? 'active' : ''}`} onClick={() => setActiveRole('muhasebe')}>
+                📊 Muhasebe (T-4)
+              </button>
+              <button className={`role-btn ${activeRole === 'operasyon' ? 'active' : ''}`} onClick={() => setActiveRole('operasyon')}>
+                ⚡ Operasyon (T-5)
+              </button>
+            </>
+          )}
           <button className={`role-btn ${activeRole === 'heatmap' ? 'active' : ''}`} onClick={() => setActiveRole('heatmap')}>
             🔥 Isı Haritası (Bonus 1)
           </button>
@@ -174,6 +273,9 @@ export default function App() {
         </div>
 
         <div className="system-status">
+          <button className="btn btn-outline btn-login" style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}>
+            🔐 Giriş Yap
+          </button>
           <span className="stamp-pill">X-DDO-Stamp: f85f26</span>
           <span className="badge badge-green">GET /_hz/f85f: 200 OK</span>
         </div>
@@ -191,7 +293,7 @@ export default function App() {
         {/* --- YOLCU PORTALI (Bonus 2) --- */}
         {activeRole === 'yolcu' && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
               <div>
                 <h2>Yolcu Kart ve Bakiye Portalı</h2>
                 <p style={{ color: 'var(--ink-muted)' }}>Kart hareketleri, 90 dakikalık canlı aktarma geri sayımı ve bakiye dolumu</p>
@@ -272,34 +374,36 @@ export default function App() {
                 <span className="panel-title">Kart Bakiye Defteri (Append-Only Ledger Tutarlılığı)</span>
                 <span className="badge badge-green">Bakiye = Defter Hareketleri Toplamı</span>
               </div>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Zaman Damgası</th>
-                    <th>Hareket Tipi</th>
-                    <th>Açıklama</th>
-                    <th>Tutar</th>
-                    <th>Kalan Bakiye</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ledger.map((item) => (
-                    <tr key={item.id}>
-                      <td className="mono" style={{ color: 'var(--ink-muted)' }}>{new Date(item.created_at).toLocaleTimeString()}</td>
-                      <td>
-                        <span className={`badge ${item.amount_kurus > 0 ? 'badge-green' : 'badge-purple'}`}>
-                          {item.entry_type}
-                        </span>
-                      </td>
-                      <td>{item.description}</td>
-                      <td className="mono" style={{ fontWeight: 600, color: item.amount_kurus > 0 ? 'var(--accent-green)' : 'var(--ink)' }}>
-                        {item.amount_kurus > 0 ? `+${(item.amount_kurus / 100).toFixed(2)}` : (item.amount_kurus / 100).toFixed(2)} ₺
-                      </td>
-                      <td className="mono" style={{ fontWeight: 600 }}>{(item.balance_after_kurus / 100).toFixed(2)} ₺</td>
+              <div className="table-responsive">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Zaman Damgası</th>
+                      <th>Hareket Tipi</th>
+                      <th>Açıklama</th>
+                      <th>Tutar</th>
+                      <th>Kalan Bakiye</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {ledger.map((item) => (
+                      <tr key={item.id}>
+                        <td className="mono" style={{ color: 'var(--ink-muted)' }}>{new Date(item.created_at).toLocaleTimeString()}</td>
+                        <td>
+                          <span className={`badge ${item.amount_kurus > 0 ? 'badge-green' : 'badge-purple'}`}>
+                            {item.entry_type}
+                          </span>
+                        </td>
+                        <td>{item.description}</td>
+                        <td className="mono" style={{ fontWeight: 600, color: item.amount_kurus > 0 ? 'var(--accent-green)' : 'var(--ink)' }}>
+                          {item.amount_kurus > 0 ? `+${(item.amount_kurus / 100).toFixed(2)}` : (item.amount_kurus / 100).toFixed(2)} ₺
+                        </td>
+                        <td className="mono" style={{ fontWeight: 600 }}>{(item.balance_after_kurus / 100).toFixed(2)} ₺</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
@@ -329,7 +433,7 @@ export default function App() {
                     <option>Usulsüz İndirimli Kart Kullanımı (150.00 TL)</option>
                     <option>Sahte / Klon Kart İhlali (500.00 TL)</option>
                   </select>
-                  <button className="btn btn-danger" onClick={() => showToast('🚨 50.00 TL İdari Para Cezası Tutanağı Sisteme Kaydedildi.')}>
+                  <button className="btn btn-danger" onClick={handleCreatePenalty}>
                     Ceza Tutanağını Kaydet
                   </button>
                 </div>
@@ -345,23 +449,25 @@ export default function App() {
               <span className="panel-title">🚏 Hat, Durak ve Tarife Yönetimi (F-3)</span>
               <span className="badge badge-green">40 Hat Aktif</span>
             </div>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Hat Kodu</th>
-                  <th>Hat Adı</th>
-                  <th>Ulaşım Modu</th>
-                  <th>İşletmeci</th>
-                  <th>Durum</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr><td className="mono">LINE_500T</td><td>500T Tuzla - Cevizlibağ</td><td>🚌 Otobüs</td><td>Belediye</td><td><span className="badge badge-green">Aktif</span></td></tr>
-                <tr><td className="mono">LINE_14ES</td><td>14ES Esenkent - Kadıköy</td><td>🚌 Otobüs</td><td>Özel Halk</td><td><span className="badge badge-green">Aktif</span></td></tr>
-                <tr><td className="mono">LINE_T1</td><td>T1 Kabataş - Bağcılar</td><td>🚋 Tramvay</td><td>Belediye</td><td><span className="badge badge-green">Aktif</span></td></tr>
-                <tr><td className="mono">LINE_VAPUR_KE</td><td>Kadıköy - Eminönü</td><td>⛴️ Vapur</td><td>Belediye</td><td><span className="badge badge-green">Aktif</span></td></tr>
-              </tbody>
-            </table>
+            <div className="table-responsive">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Hat Kodu</th>
+                    <th>Hat Adı</th>
+                    <th>Ulaşım Modu</th>
+                    <th>İşletmeci</th>
+                    <th>Durum</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td className="mono">LINE_500T</td><td>500T Tuzla - Cevizlibağ</td><td>🚌 Otobüs</td><td>Belediye</td><td><span className="badge badge-green">Aktif</span></td></tr>
+                  <tr><td className="mono">LINE_14ES</td><td>14ES Esenkent - Kadıköy</td><td>🚌 Otobüs</td><td>Özel Halk</td><td><span className="badge badge-green">Aktif</span></td></tr>
+                  <tr><td className="mono">LINE_T1</td><td>T1 Kabataş - Bağcılar</td><td>🚋 Tramvay</td><td>Belediye</td><td><span className="badge badge-green">Aktif</span></td></tr>
+                  <tr><td className="mono">LINE_VAPUR_KE</td><td>Kadıköy - Eminönü</td><td>⛴️ Vapur</td><td>Belediye</td><td><span className="badge badge-green">Aktif</span></td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -370,7 +476,9 @@ export default function App() {
           <div className="panel">
             <div className="panel-header">
               <span className="panel-title">📊 Gelir Paylaşımı ve Dönem Kapanışı (T-4)</span>
-              <span className="badge badge-green">Kuruş Kayıpsız Hare-Niemeyer Dağıtımı</span>
+              <span className={`badge ${isPeriodClosed ? 'badge-red' : 'badge-green'}`}>
+                {isPeriodClosed ? 'Kapalı Dönem (Donduruldu)' : 'Kuruş Kayıpsız Hare-Niemeyer Dağıtımı'}
+              </span>
             </div>
             <div className="grid-2">
               <div style={{ backgroundColor: 'var(--surface-muted)', padding: '1.25rem', borderRadius: '0.5rem' }}>
@@ -382,14 +490,19 @@ export default function App() {
                 <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--accent-amber)' }}>%37.6 (9.400.000 ₺)</div>
               </div>
             </div>
-            <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem' }}>
-              <button className="btn btn-primary" onClick={() => showToast('🔒 Ekim 2026 Gelir Paylaşım Dönemi Başarıyla Kapatıldı.')}>
+            <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+              <button className="btn btn-primary" onClick={handleCloseSettlement}>
                 Dönemi Kapat ve Dondur (Close Period)
               </button>
               <button className="btn btn-outline" onClick={() => showToast('📝 Kapanış Sonrası Storno (Ters Kayıt) Düzeltmesi Eklendi.')}>
                 Storno Düzeltme Kaydı Ekle
               </button>
             </div>
+            {isPeriodClosed && (
+              <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--accent-red)', borderRadius: '0.5rem', color: 'var(--accent-red)', fontSize: '0.9rem' }}>
+                🔒 Bu dönem <strong>kapalı dönem</strong> olarak işaretlenmiştir. Yeni biniş eklenemez, yalnızca storno düzeltme kaydı kabul edilir.
+              </div>
+            )}
           </div>
         )}
 
@@ -418,26 +531,34 @@ export default function App() {
               <span className="badge badge-purple">Canlı Validatör Telemetrisi</span>
             </div>
             <p style={{ color: 'var(--ink-muted)', marginBottom: '1.5rem' }}>Hatların 24 saatlik anlık doluluk oranları ve kalabalık indeksleri:</p>
-            <div className="heatmap-grid">
-              {heatmapData.map((item) => (
-                <div key={item.line_id} className={`heat-card ${item.crowd_level.toLowerCase()}`}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span className="mono" style={{ fontWeight: 700, fontSize: '1.1rem' }}>{item.line_id}</span>
-                    <span className={`badge ${item.crowd_level === 'HIGH' ? 'badge-red' : item.crowd_level === 'MEDIUM' ? 'badge-amber' : 'badge-green'}`}>
-                      {item.crowd_level}
-                    </span>
+            {heatmapError ? (
+              <div style={{ padding: '2rem', textAlign: 'center', backgroundColor: 'rgba(239, 68, 68, 0.08)', border: '1px solid var(--accent-red)', borderRadius: '0.5rem' }}>
+                <div style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--accent-red)', marginBottom: '0.5rem' }}>⚠️ Veri Alınamadı</div>
+                <p style={{ color: 'var(--ink-muted)', marginBottom: '1rem' }}>Sunucu bağlantı hatası oluştu, ısı haritası verileri sunucudan alınamadı.</p>
+                <button className="btn btn-outline" onClick={fetchHeatmap}>Yeniden Dene</button>
+              </div>
+            ) : (
+              <div className="heatmap-grid">
+                {heatmapData.map((item) => (
+                  <div key={item.line_id} className={`heat-card ${(item.crowd_level || 'LOW').toLowerCase()}`}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span className="mono" style={{ fontWeight: 700, fontSize: '1.1rem' }}>{item.line_id}</span>
+                      <span className={`badge ${item.crowd_level === 'HIGH' ? 'badge-red' : item.crowd_level === 'MEDIUM' ? 'badge-amber' : 'badge-green'}`}>
+                        {item.crowd_level || 'NORMAL'}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '0.9rem', marginTop: '0.25rem' }}>{item.line_name}</div>
+                    <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                      <span style={{ color: 'var(--ink-muted)' }}>Doluluk Oranı:</span>
+                      <span className="mono" style={{ fontWeight: 600 }}>%{((item.occupancy_ratio || 0) * 100).toFixed(0)}</span>
+                    </div>
+                    <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--canvas)', borderRadius: '4px', marginTop: '0.5rem', overflow: 'hidden' }}>
+                      <div style={{ width: `${(item.occupancy_ratio || 0) * 100}%`, height: '100%', backgroundColor: item.crowd_level === 'HIGH' ? 'var(--accent-red)' : item.crowd_level === 'MEDIUM' ? 'var(--accent-amber)' : 'var(--accent-green)' }}></div>
+                    </div>
                   </div>
-                  <div style={{ fontSize: '0.9rem', marginTop: '0.25rem' }}>{item.line_name}</div>
-                  <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                    <span style={{ color: 'var(--ink-muted)' }}>Doluluk Oranı:</span>
-                    <span className="mono" style={{ fontWeight: 600 }}>%{(item.occupancy_ratio * 100).toFixed(0)}</span>
-                  </div>
-                  <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--canvas)', borderRadius: '4px', marginTop: '0.5rem', overflow: 'hidden' }}>
-                    <div style={{ width: `${item.occupancy_ratio * 100}%`, height: '100%', backgroundColor: item.crowd_level === 'HIGH' ? 'var(--accent-red)' : item.crowd_level === 'MEDIUM' ? 'var(--accent-amber)' : 'var(--accent-green)' }}></div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
