@@ -13,6 +13,7 @@ import (
 
 var (
 	ErrPeriodAlreadyClosed = errors.New("dönem zaten kapatılmış")
+	ErrPeriodNotClosed     = errors.New("dönem henüz kapatılmamış")
 	ErrPeriodNotFound      = errors.New("dönem bulunamadı")
 	ErrInvalidShareTotal   = errors.New("kuruş dağıtımı toplam geliri tutmuyor")
 )
@@ -222,6 +223,9 @@ func (s *SettlementService) RecordStornoAfterClose(
 	period, ok := s.periods[periodID]
 	if !ok {
 		return nil, ErrPeriodNotFound
+	}
+	if !period.IsClosed {
+		return nil, ErrPeriodNotClosed
 	}
 
 	entry := SettlementLedgerEntry{

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"log/slog"
 	"net/http"
 	"os"
@@ -34,6 +35,9 @@ func main() {
 	// 2. Konfigürasyonu yükle
 	cfg := config.Load()
 
+	resetFlag := flag.Bool("reset", false, "Veritabanını sıfırla ve başlangıç seed durumuna getir")
+	flag.Parse()
+
 	// 3. Veritabanı Bağlantı Havuzu (pgxpool)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -49,6 +53,24 @@ func main() {
 		pool = nil
 	} else {
 		slog.Info("PostgreSQL veritabanı bağlantısı başarılı.")
+		if *resetFlag {
+			slog.Info("Veritabanı tabloları sıfırlanıyor (reset-demo)...")
+			_, err := pool.Exec(ctx, `
+				TRUNCATE TABLE jw_ledger, jw_validator_events, jw_penalties, jw_anomalies, jw_settlement_ledger, jw_audit_logs CASCADE;
+				UPDATE jw_cards SET balance_kurus = 0, daily_taps_count = 0, monthly_capping_spent_kurus = 0, last_tap_at = NULL, last_station_id = NULL;
+			`)
+			if err != nil {
+				slog.Error("Tablo sıfırlama hatası", "error", err)
+				os.Exit(1)
+			}
+			if err := runMigrationsAndSeed(pool, cfg.JWTSecret); err != nil {
+				slog.Error("Yeniden seed hatası", "error", err)
+				os.Exit(1)
+			}
+			slog.Info("Veritabanı ve demo ortamı başarıyla sıfırlandı.")
+			return
+		}
+
 		// Otomatik Migrasyon ve Seed
 		if err := runMigrationsAndSeed(pool, cfg.JWTSecret); err != nil {
 			slog.Error("Migrasyon veya seed hatası", "error", err)
@@ -67,6 +89,9 @@ func main() {
 	}
 
 	syncSvc := sync.NewSyncService(pricingEngine, ledgerSvc, 5000) // 50 TL negatif tolerans
+	if pool != nil {
+		syncSvc.SetPool(pool)
+	}
 	settleSvc := settlement.NewSettlementService()
 	anomalyDet := anomaly.NewAnomalyDetector()
 

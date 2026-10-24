@@ -59,13 +59,19 @@ func main() {
 
 	rng := rand.New(rand.NewSource(cfg.Seed))
 
-	// 40 Hat ve Duraklar oluştur
-	lines := make([]string, cfg.TotalLines)
-	for i := 0; i < cfg.TotalLines; i++ {
-		lines[i] = fmt.Sprintf("SIM_LINE_%02d", i+1)
+	// 40 Gerçek Tohumlanmış Hat
+	lines := []string{
+		"LINE_500T", "LINE_14ES", "LINE_T1", "LINE_VAPUR_KE", "LINE_M1A",
+		"LINE_M2", "LINE_M3", "LINE_M4", "LINE_M5", "LINE_M7",
+		"LINE_M8", "LINE_M9", "LINE_M11", "LINE_T4", "LINE_T5",
+		"LINE_VAPUR_BU", "LINE_VAPUR_KK", "LINE_VAPUR_BO", "LINE_VAPUR_ADALAR", "LINE_34AS",
+		"LINE_34BZ", "LINE_34G", "LINE_34Z", "LINE_15F", "LINE_16D",
+		"LINE_19F", "LINE_25T", "LINE_40T", "LINE_70FE", "LINE_89C",
+		"LINE_97GE", "LINE_145T", "LINE_150", "LINE_151", "LINE_152",
+		"LINE_153", "LINE_154", "LINE_250", "LINE_500ES", "LINE_E10",
 	}
 
-	stations := []string{"STAT_KADIKOY", "STAT_EMINONU", "STAT_KABATAS", "STAT_AYRILIK", "STAT_SARIYER"}
+	stations := []string{"STAT_KADIKOY", "STAT_EMINONU", "STAT_KABATAS", "STAT_BAGCIAR", "STAT_AYRILIK", "STAT_SARIYER"}
 
 	client := &http.Client{Timeout: 5 * time.Second}
 
@@ -161,5 +167,7 @@ func sendBatch(client *http.Client, baseURL string, batch []TapPayload) {
 
 	if resp.StatusCode == http.StatusOK {
 		slog.Debug("Paket senkronize edildi", "validator", batch[0].ValidatorID, "size", len(batch))
+	} else {
+		slog.Warn("Paket senkronizasyonu başarısız", "status", resp.StatusCode, "validator", batch[0].ValidatorID)
 	}
 }
