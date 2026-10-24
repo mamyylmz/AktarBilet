@@ -1,0 +1,101 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ddo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aktarbilet}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aktarbilet"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - aktarbilet-net
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: ddo-pelikan-api # ZORUNLU SİSTEM CANARY CONTAINER ADI
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      DATABASE_URL: "postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-aktarbilet}?sslmode=disable"
+      JWT_SECRET: ${JWT_SECRET:-ddo-aktarbilet-super-secret-key-2026}
+      DDO_STAMP: "f85f26"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - aktarbilet-net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: ddo-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:3000/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - aktarbilet-net
+
+  simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.simulator
+    container_name: ddo-simulator
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: "http://backend:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - aktarbilet-net
+
+  verify:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: ddo-verify
+    entrypoint: ["go", "run", "./cmd/verify"]
+    environment:
+      BACKEND_URL: "http://backend:8080"
+    profiles:
+      - verify
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - aktarbilet-net
+
+volumes:
+  postgres_data:
+
+networks:
+  aktarbilet-net:
+    driver: bridge
