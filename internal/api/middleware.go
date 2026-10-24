@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mamyylmz/AktarBilet/internal/auth"
 	"github.com/mamyylmz/AktarBilet/internal/domain"
 )
@@ -53,7 +54,6 @@ func RequestLogger(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 		duration := time.Since(start)
 
-		// Parola veya token loglanmaz (proje standardı)
 		slog.Info("HTTP Request",
 			"method", r.Method,
 			"path", r.URL.Path,
@@ -63,7 +63,7 @@ func RequestLogger(next http.Handler) http.Handler {
 	})
 }
 
-// AuthMiddleware extracts JWT token from Authorization header
+// AuthMiddleware extracts JWT token from Authorization header if present
 func AuthMiddleware(authSvc *auth.AuthService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -91,8 +91,23 @@ func AuthMiddleware(authSvc *auth.AuthService) func(http.Handler) http.Handler {
 	}
 }
 
-// RequireRole checks if the authenticated user possesses one of the allowed roles
-func RequireRole(roles ...domain.UserRole) func(http.Handler) http.Handler {
+// RequireAuth ensures that the request is authenticated with a valid JWT
+func RequireAuth() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claimsVal := r.Context().Value(UserContextKey)
+			if claimsVal == nil {
+				WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Oturum açmanız gerekmektedir")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireRole checks if the authenticated user possesses one of the allowed roles,
+// dynamically verifying against the database to revoke stale role claims.
+func RequireRole(pool *pgxpool.Pool, roles ...domain.UserRole) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claimsVal := r.Context().Value(UserContextKey)
@@ -107,15 +122,26 @@ func RequireRole(roles ...domain.UserRole) func(http.Handler) http.Handler {
 				return
 			}
 
+			// Veritabanından güncel rolü sorgula (stale-role token revokasyon kontrolü)
+			currentRole := claims.Role
+			if pool != nil {
+				var dbRole domain.UserRole
+				err := pool.QueryRow(r.Context(), "SELECT role FROM jw_tf_users WHERE id = $1", claims.UserID).Scan(&dbRole)
+				if err == nil {
+					currentRole = dbRole
+					claims.Role = dbRole
+				}
+			}
+
 			// Admin her şeye erişebilir
-			if claims.Role == domain.RoleAdmin {
+			if currentRole == domain.RoleAdmin {
 				next.ServeHTTP(w, r)
 				return
 			}
 
 			hasRole := false
 			for _, r := range roles {
-				if claims.Role == r {
+				if currentRole == r {
 					hasRole = true
 					break
 				}

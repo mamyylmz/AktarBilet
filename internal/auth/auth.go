@@ -83,12 +83,17 @@ func (s *AuthService) GenerateTokens(user *domain.User) (string, string, error) 
 }
 
 func (s *AuthService) ValidateToken(tokenString string) (*Claims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, ErrInvalidToken
-		}
-		return s.jwtSecret, nil
-	})
+	token, err := jwt.ParseWithClaims(
+		tokenString,
+		&Claims{},
+		func(token *jwt.Token) (interface{}, error) {
+			if token.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+				return nil, ErrInvalidToken
+			}
+			return s.jwtSecret, nil
+		},
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+	)
 	if err != nil || !token.Valid {
 		return nil, ErrInvalidToken
 	}

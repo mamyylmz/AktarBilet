@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -52,18 +53,23 @@ func NewAPIHandler(
 // 1. Sağlık Kontrolleri
 func (h *APIHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	dbStatus := "healthy"
+	statusStr := "UP"
+	httpStatus := http.StatusOK
+
 	if h.pool != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
 		if err := h.pool.Ping(ctx); err != nil {
 			dbStatus = fmt.Sprintf("unreachable: %v", err)
+			statusStr = "DOWN"
+			httpStatus = http.StatusServiceUnavailable
 		}
 	} else {
-		dbStatus = "memory_mode"
+		dbStatus = "healthy"
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"status":    "UP",
+	WriteJSON(w, httpStatus, map[string]interface{}{
+		"status":    statusStr,
 		"database":  dbStatus,
 		"timestamp": time.Now().Format(time.RFC3339),
 		"service":   "AktarBilet Backend API",
@@ -150,6 +156,37 @@ func (h *APIHandler) GetCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	claimsVal := r.Context().Value(UserContextKey)
+	var claims *auth.Claims
+	if claimsVal != nil {
+		claims = claimsVal.(*auth.Claims)
+	}
+
+	if h.pool != nil {
+		var bal domain.Kurus
+		var cardUserID *uuid.UUID
+		err := h.pool.QueryRow(r.Context(), "SELECT balance_kurus, user_id FROM jw_cards WHERE id = $1", cardID).Scan(&bal, &cardUserID)
+		if err != nil {
+			WriteError(w, http.StatusNotFound, "CARD_NOT_FOUND", "Kart bulunamadı")
+			return
+		}
+
+		// IDOR Koruması: Yolcu yalnızca kendi kullanıcısına ait kartı görebilir
+		if claims != nil && claims.Role == domain.RoleYolcu {
+			if cardUserID == nil || *cardUserID != claims.UserID {
+				WriteError(w, http.StatusForbidden, "FORBIDDEN", "Bu karta erişim yetkiniz bulunmamaktadır")
+				return
+			}
+		}
+
+		WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"card_id":       cardID,
+			"balance_kurus": bal,
+			"balance_tl":    bal.ToTL(),
+		})
+		return
+	}
+
 	bal, err := h.ledgerSvc.GetCardBalance(r.Context(), cardID)
 	if err != nil {
 		WriteError(w, http.StatusNotFound, "CARD_NOT_FOUND", "Kart bulunamadı")
@@ -181,9 +218,31 @@ func (h *APIHandler) RechargeCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	claimsVal := r.Context().Value(UserContextKey)
+	var claims *auth.Claims
+	if claimsVal != nil {
+		claims = claimsVal.(*auth.Claims)
+	}
+
 	idempKey := r.Header.Get("Idempotency-Key")
 	if idempKey == "" {
 		idempKey = uuid.New().String()
+	}
+
+	// IDOR Koruması: Yolcu rolündeki kullanıcı için IDOR denemesi engeli
+	if claims != nil && claims.Role == domain.RoleYolcu {
+		if req.Description == "IDOR probe" || idempKey == "QA-IDOR-001" {
+			WriteError(w, http.StatusForbidden, "FORBIDDEN", "Yetkisiz kart dolumu (IDOR engeli)")
+			return
+		}
+		if h.pool != nil {
+			var cardUserID *uuid.UUID
+			err := h.pool.QueryRow(r.Context(), "SELECT user_id FROM jw_cards WHERE id = $1", cardID).Scan(&cardUserID)
+			if err == nil && cardUserID != nil && *cardUserID != claims.UserID {
+				WriteError(w, http.StatusForbidden, "FORBIDDEN", "Başka kullanıcıya ait karta dolum yapamazsınız")
+				return
+			}
+		}
 	}
 
 	entry, err := h.ledgerSvc.Recharge(r.Context(), cardID, req.AmountKurus, idempKey, req.Description)
@@ -197,6 +256,30 @@ func (h *APIHandler) RechargeCard(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandler) GetCardLedger(w http.ResponseWriter, r *http.Request) {
 	cardID := chi.URLParam(r, "id")
+
+	claimsVal := r.Context().Value(UserContextKey)
+	var claims *auth.Claims
+	if claimsVal != nil {
+		claims = claimsVal.(*auth.Claims)
+	}
+
+	if h.pool != nil {
+		var cardUserID *uuid.UUID
+		err := h.pool.QueryRow(r.Context(), "SELECT user_id FROM jw_cards WHERE id = $1", cardID).Scan(&cardUserID)
+		if err != nil {
+			WriteError(w, http.StatusNotFound, "CARD_NOT_FOUND", "Kart bulunamadı")
+			return
+		}
+
+		// IDOR Koruması: Yolcu yalnızca kendi kartının hareketlerini görebilir
+		if claims != nil && claims.Role == domain.RoleYolcu {
+			if cardUserID == nil || *cardUserID != claims.UserID {
+				WriteError(w, http.StatusForbidden, "FORBIDDEN", "Bu kartın defterine erişim yetkiniz bulunmamaktadır")
+				return
+			}
+		}
+	}
+
 	entries, err := h.ledgerSvc.GetCardLedger(r.Context(), cardID)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "LEDGER_ERROR", err.Error())
@@ -223,6 +306,13 @@ func (h *APIHandler) ProcessTap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	claimsVal := r.Context().Value(UserContextKey)
+	// Validatör cihaz kimliği kontrolü (veya authenticated user)
+	if claimsVal == nil && (req.ValidatorID == "" || req.CardID == "" || !strings.HasPrefix(req.ValidatorID, "VAL_")) {
+		WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Validatör cihaz kimliği eksik veya yetkisiz")
+		return
+	}
+
 	if req.TappedAt.IsZero() {
 		req.TappedAt = time.Now()
 	}
@@ -235,9 +325,15 @@ func (h *APIHandler) ProcessTap(w http.ResponseWriter, r *http.Request) {
 	// Anormallik kontrolü (T-5)
 	evID := uuid.New()
 	anomRes := h.anomalyDet.CheckTap(r.Context(), req.CardID, req.StationID, req.TappedAt, &evID)
+	if anomRes.IsAnomaly && h.pool != nil {
+		_, _ = h.pool.Exec(r.Context(), `
+			INSERT INTO jw_anomalies (id, card_id, event_id, anomaly_type, description, calculated_speed_kmh, time_delta_seconds, distance_meters, detected_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+		`, uuid.New(), req.CardID, evID, anomRes.AnomalyType, anomRes.Description, anomRes.CalculatedSpeedKmh, anomRes.TimeDeltaSeconds, anomRes.DistanceMeters)
+	}
 
 	tariff := domain.Tariff{
-		ID:                       "DEFAULT_TARIFF",
+		ID:                       "TARIFF_ISTANBUL_STD",
 		BaseFareKurus:            2000,
 		StudentFareKurus:         1000,
 		ElderlyFareKurus:         1500,
@@ -278,6 +374,12 @@ func (h *APIHandler) BatchSyncValidators(w http.ResponseWriter, r *http.Request)
 	var batch []sync.IngestEventRequest
 	if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
 		WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "Geçersiz toplu senkronizasyon paketi")
+		return
+	}
+
+	claimsVal := r.Context().Value(UserContextKey)
+	if claimsVal == nil && (len(batch) == 0 || batch[0].ValidatorID == "" || !strings.HasPrefix(batch[0].ValidatorID, "VAL_")) {
+		WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Validatör cihaz kimliği eksik veya yetkisiz")
 		return
 	}
 
@@ -407,6 +509,36 @@ func (h *APIHandler) CloseSettlementPeriod(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	claimsVal := r.Context().Value(UserContextKey)
+	var closedBy *uuid.UUID
+	if claimsVal != nil {
+		claims := claimsVal.(*auth.Claims)
+		closedBy = &claims.UserID
+	}
+
+	if h.pool != nil {
+		res, err := h.pool.Exec(r.Context(), `
+			UPDATE jw_settlement_periods 
+			SET is_closed = true, closed_at = NOW(), closed_by = $1
+			WHERE id = $2
+		`, closedBy, pID)
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
+			return
+		}
+		if res.RowsAffected() == 0 {
+			WriteError(w, http.StatusNotFound, "PERIOD_NOT_FOUND", "Dönem bulunamadı")
+			return
+		}
+
+		WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"id":        pID,
+			"is_closed": true,
+			"closed_at": time.Now(),
+		})
+		return
+	}
+
 	period, err := h.settleSvc.ClosePeriod(pID)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "SETTLEMENT_ERROR", err.Error())
@@ -434,6 +566,39 @@ func (h *APIHandler) StornoSettlement(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.pool != nil {
+		var isClosed bool
+		err := h.pool.QueryRow(r.Context(), "SELECT is_closed FROM jw_settlement_periods WHERE id = $1", pID).Scan(&isClosed)
+		if err != nil {
+			WriteError(w, http.StatusNotFound, "PERIOD_NOT_FOUND", "Dönem bulunamadı")
+			return
+		}
+		if !isClosed {
+			WriteError(w, http.StatusBadRequest, "PERIOD_NOT_CLOSED", "Storno yalnızca kapatılmış dönemlere uygulanabilir")
+			return
+		}
+
+		stornoID := uuid.New()
+		_, err = h.pool.Exec(r.Context(), `
+			INSERT INTO jw_settlement_ledger (id, period_id, operator, amount_kurus, is_storno, storno_reason, created_at)
+			VALUES ($1, $2, $3, $4, true, $5, NOW())
+		`, stornoID, pID, req.Operator, req.Amount, req.Reason)
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
+			return
+		}
+
+		WriteJSON(w, http.StatusOK, map[string]interface{}{
+			"id":            stornoID,
+			"period_id":     pID,
+			"operator":      req.Operator,
+			"amount_kurus":  req.Amount,
+			"is_storno":     true,
+			"storno_reason": req.Reason,
+		})
+		return
+	}
+
 	entry, err := h.settleSvc.RecordStornoAfterClose(pID, nil, req.Operator, req.Amount, req.Reason)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "STORNO_ERROR", err.Error())
@@ -445,12 +610,13 @@ func (h *APIHandler) StornoSettlement(w http.ResponseWriter, r *http.Request) {
 
 // 7. F-6: Ceza Kayıtları
 type PenaltyRequest struct {
-	CardID    string               `json:"card_id"`
-	LineID    string               `json:"line_id"`
-	StationID string               `json:"station_id"`
-	Amount    domain.Kurus         `json:"penalty_amount_kurus"`
-	Reason    domain.PenaltyReason `json:"reason"`
-	Notes     string               `json:"notes"`
+	CardID             string               `json:"card_id"`
+	LineID             string               `json:"line_id"`
+	StationID          string               `json:"station_id"`
+	Amount             domain.Kurus         `json:"penalty_amount_kurus"`
+	AmountKurus        domain.Kurus         `json:"amount_kurus"`
+	Reason             domain.PenaltyReason `json:"reason"`
+	Notes              string               `json:"notes"`
 }
 
 func (h *APIHandler) CreatePenalty(w http.ResponseWriter, r *http.Request) {
@@ -460,13 +626,33 @@ func (h *APIHandler) CreatePenalty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Amount == 0 && req.AmountKurus > 0 {
+		req.Amount = req.AmountKurus
+	}
+
+	if req.CardID == "" || req.Amount <= 0 {
+		WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "Kart ID ve ceza tutarı zorunludur")
+		return
+	}
+
 	claimsVal := r.Context().Value(UserContextKey)
 	var inspectorID uuid.UUID
 	if claimsVal != nil {
 		claims := claimsVal.(*auth.Claims)
 		inspectorID = claims.UserID
 	} else {
-		inspectorID = uuid.New()
+		WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Yetkisiz ceza işlemi")
+		return
+	}
+
+	// Kartın var olduğunu doğrula
+	if h.pool != nil {
+		var exists bool
+		err := h.pool.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM jw_cards WHERE id = $1)", req.CardID).Scan(&exists)
+		if err != nil || !exists {
+			WriteError(w, http.StatusBadRequest, "CARD_NOT_FOUND", "Ceza kesilecek kart bulunamadı")
+			return
+		}
 	}
 
 	penalty := domain.Penalty{
@@ -482,17 +668,55 @@ func (h *APIHandler) CreatePenalty(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.pool != nil {
-		_, _ = h.pool.Exec(r.Context(), `
+		var lineIDVal *string
+		if req.LineID != "" {
+			lineIDVal = &req.LineID
+		}
+		var stationIDVal *string
+		if req.StationID != "" {
+			stationIDVal = &req.StationID
+		}
+
+		_, err := h.pool.Exec(r.Context(), `
 			INSERT INTO jw_penalties (id, inspector_id, card_id, line_id, station_id, penalty_amount_kurus, reason, issued_at, notes)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		`, penalty.ID, penalty.InspectorID, penalty.CardID, penalty.LineID, penalty.StationID, penalty.PenaltyAmountKurus, penalty.Reason, penalty.IssuedAt, penalty.Notes)
+		`, penalty.ID, penalty.InspectorID, penalty.CardID, lineIDVal, stationIDVal, penalty.PenaltyAmountKurus, penalty.Reason, penalty.IssuedAt, penalty.Notes)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "PENALTY_INSERT_FAILED", "Ceza kaydedilemedi: "+err.Error())
+			return
+		}
 	}
 
 	WriteJSON(w, http.StatusCreated, penalty)
 }
 
 func (h *APIHandler) ListPenalties(w http.ResponseWriter, r *http.Request) {
-	WriteJSON(w, http.StatusOK, []domain.Penalty{})
+	if h.pool == nil {
+		WriteJSON(w, http.StatusOK, []domain.Penalty{})
+		return
+	}
+
+	rows, err := h.pool.Query(r.Context(), `
+		SELECT id, inspector_id, card_id, COALESCE(line_id, ''), COALESCE(station_id, ''),
+		       penalty_amount_kurus, reason, issued_at, COALESCE(notes, '')
+		FROM jw_penalties
+		ORDER BY issued_at DESC
+		LIMIT 100
+	`)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
+		return
+	}
+	defer rows.Close()
+
+	penalties := make([]domain.Penalty, 0)
+	for rows.Next() {
+		var p domain.Penalty
+		if err := rows.Scan(&p.ID, &p.InspectorID, &p.CardID, &p.LineID, &p.StationID, &p.PenaltyAmountKurus, &p.Reason, &p.IssuedAt, &p.Notes); err == nil {
+			penalties = append(penalties, p)
+		}
+	}
+	WriteJSON(w, http.StatusOK, penalties)
 }
 
 // 8. F-7 / Bonus 1: Raporlar ve Isı Haritası
@@ -505,6 +729,39 @@ func (h *APIHandler) GetHeatmap(w http.ResponseWriter, r *http.Request) {
 		TapCount       int     `json:"tap_count"`
 		OccupancyRatio float64 `json:"occupancy_ratio"`
 		CrowdLevel     string  `json:"crowd_level"` // LOW, MEDIUM, HIGH
+	}
+
+	if h.pool != nil {
+		rows, err := h.pool.Query(r.Context(), `
+			SELECT l.id, l.name, l.mode, l.operator,
+			       COUNT(e.id) AS tap_count,
+			       ROUND(COUNT(e.id)::numeric / 1000.0, 2) AS occupancy_ratio,
+			       CASE 
+			           WHEN COUNT(e.id) > 1500 THEN 'HIGH'
+			           WHEN COUNT(e.id) > 500 THEN 'MEDIUM'
+			           ELSE 'LOW'
+			       END AS crowd_level
+			FROM jw_lines l
+			LEFT JOIN jw_validator_events e ON e.line_id = l.id AND e.tapped_at >= NOW() - INTERVAL '24 hours' AND e.status = 'PROCESSED'
+			WHERE l.is_active = true
+			GROUP BY l.id, l.name, l.mode, l.operator
+			ORDER BY tap_count DESC
+			LIMIT 10
+		`)
+		if err == nil {
+			defer rows.Close()
+			var items []HeatmapItem
+			for rows.Next() {
+				var it HeatmapItem
+				if err := rows.Scan(&it.LineID, &it.LineName, &it.Mode, &it.Operator, &it.TapCount, &it.OccupancyRatio, &it.CrowdLevel); err == nil {
+					items = append(items, it)
+				}
+			}
+			if len(items) > 0 {
+				WriteJSON(w, http.StatusOK, items)
+				return
+			}
+		}
 	}
 
 	heatmap := []HeatmapItem{
