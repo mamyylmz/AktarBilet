@@ -1,0 +1,91 @@
+name: AktarBilet CI / CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-and-verify:
+    name: Backend Testleri ve Doğrulama
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kodu Klonla
+        uses: actions/checkout@v4
+
+      - name: Go Ortamını Kur
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: true
+
+      - name: Go Bağımlılıklarını İndir
+        run: go mod download
+
+      - name: Go Statik Analiz (Vet & Format)
+        run: |
+          go vet ./...
+          test -z "$(gofmt -l .)" || (echo "Formatlanmamış dosyalar mevcut" && exit 1)
+
+      - name: Kapsamlı Birim ve Entegrasyon Testleri
+        run: |
+          go test -v -race -coverprofile=coverage.out ./internal/...
+          go tool cover -func=coverage.out
+
+      - name: Hızlı Doğrulama Komutu (make verify)
+        run: go run ./cmd/verify
+
+  frontend-build:
+    name: Frontend Derleme ve Tip Kontrolü
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kodu Klonla
+        uses: actions/checkout@v4
+
+      - name: Node.js Kurulumu
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: web/package.json
+
+      - name: Bağımlılıkları Yükle ve Derle
+        run: |
+          cd web
+          npm install
+          npm run build
+
+  container-build:
+    name: Docker Konteyner İmajları Derleme
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kodu Klonla
+        uses: actions/checkout@v4
+
+      - name: Docker Buildx Kur
+        uses: docker/setup-buildx-action@v3
+
+      - name: Backend İmajını Derle (ddo-pelikan-api)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.backend
+          push: false
+          tags: ddo-pelikan-api:latest
+
+      - name: Frontend İmajını Derle
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.frontend
+          push: false
+          tags: ddo-frontend:latest
+
+      - name: Simülatör İmajını Derle
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.simulator
+          push: false
+          tags: ddo-simulator:latest
