@@ -6,10 +6,17 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mamyylmz/AktarBilet/internal/auth"
 	"github.com/mamyylmz/AktarBilet/internal/domain"
 )
+
+type DBExecutor interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, arguments ...any) pgx.Row
+}
 
 type SeedUser struct {
 	Email    string
@@ -104,7 +111,95 @@ func DefaultSeedLines() []domain.Line {
 	}
 }
 
+func DefaultSeedStations() []domain.Station {
+	return []domain.Station{
+		{ID: "STAT_KADIKOY", Name: "Kadıköy İskele", Mode: domain.ModeFerry, Latitude: 40.9904, Longitude: 29.0254, ZoneID: 1},
+		{ID: "STAT_EMINONU", Name: "Eminönü İskele & Meydan", Mode: domain.ModeFerry, Latitude: 41.0175, Longitude: 28.9734, ZoneID: 1},
+		{ID: "STAT_KABATAS", Name: "Kabataş Tramvay", Mode: domain.ModeTram, Latitude: 41.0355, Longitude: 28.9922, ZoneID: 1},
+		{ID: "STAT_BAGCIAR", Name: "Bağcılar Meydan", Mode: domain.ModeTram, Latitude: 41.0341, Longitude: 28.8572, ZoneID: 2},
+		{ID: "STAT_AYRILIK", Name: "Ayrılık Çeşmesi", Mode: domain.ModeBus, Latitude: 40.9982, Longitude: 29.0305, ZoneID: 1},
+		{ID: "STAT_SARIYER", Name: "Sarıyer Merkez", Mode: domain.ModeBus, Latitude: 41.1685, Longitude: 29.0554, ZoneID: 3},
+	}
+}
+
+func DefaultSeedTariff() domain.Tariff {
+	return domain.Tariff{
+		ID:                       "TARIFF_ISTANBUL_STD",
+		Name:                     "İstanbul Şehir İçi Entegre Tarife",
+		Mode:                     domain.ModeBus,
+		BaseFareKurus:            2000,   // 20.00 TL
+		StudentFareKurus:         1000,   // 10.00 TL
+		ElderlyFareKurus:         1500,   // 15.00 TL
+		Transfer1DiscountPct:     50,     // %50 (10.00 TL)
+		Transfer2DiscountPct:     75,     // %75 (5.00 TL)
+		NightSurchargePct:        50,     // %50 (30.00 TL)
+		StudentDailyLimit:        10,     // 10 indirimli biniş
+		MonthlyCappingLimitKurus: 150000, // 1500.00 TL tavan
+		IsActive:                 true,
+	}
+}
+
+type SeedValidator struct {
+	ID        string
+	LineID    string
+	StationID string
+	Plate     string
+}
+
+func DefaultSeedValidators() []SeedValidator {
+	return []SeedValidator{
+		{ID: "VAL_500T_01", LineID: "LINE_500T", StationID: "STAT_AYRILIK", Plate: "34 HO 1001"},
+		{ID: "VAL_14ES_01", LineID: "LINE_14ES", StationID: "STAT_KADIKOY", Plate: "34 HO 2002"},
+		{ID: "VAL_T1_01", LineID: "LINE_T1", StationID: "STAT_KABATAS", Plate: "T1-TR-01"},
+		{ID: "VAL_VAPUR_01", LineID: "LINE_VAPUR_KE", StationID: "STAT_KADIKOY", Plate: "SH-VAPUR-01"},
+	}
+}
+
+func DefaultDemoCards(yolcuUID *uuid.UUID) []domain.Card {
+	return []domain.Card{
+		{
+			ID:           "CARD_TAM_001",
+			CardType:     domain.CardTypeTam,
+			BalanceKurus: 50000, // 500.00 TL (Not assigned to yolcu user, owned independently)
+			UserID:       nil,
+		},
+		{
+			ID:           "CARD_OGRENCI_001",
+			CardType:     domain.CardTypeOgrenci,
+			BalanceKurus: 25000, // 250.00 TL
+			UserID:       nil,
+		},
+		{
+			ID:           "CARD_YASLI_001",
+			CardType:     domain.CardTypeYasli,
+			BalanceKurus: 15000, // 150.00 TL
+			UserID:       nil,
+		},
+		{
+			ID:              "CARD_KARA_LISTE_001",
+			CardType:        domain.CardTypeTam,
+			BalanceKurus:    0,
+			IsBlacklisted:   true,
+			BlacklistReason: "Sahte kimlik tespiti (Kara liste demo)",
+			UserID:          nil,
+		},
+		{
+			ID:           "CARD_YOLCU_001",
+			CardType:     domain.CardTypeTam,
+			BalanceKurus: 50000, // 500.00 TL (Owned by yolcu@aktarbilet.gov.tr)
+			UserID:       yolcuUID,
+		},
+	}
+}
+
 func SeedDatabase(ctx context.Context, pool *pgxpool.Pool, authSvc *auth.AuthService) error {
+	if pool == nil {
+		return nil
+	}
+	return SeedDatabaseWithExecutor(ctx, pool, authSvc)
+}
+
+func SeedDatabaseWithExecutor(ctx context.Context, pool DBExecutor, authSvc *auth.AuthService) error {
 	slog.Info("Otomatik seed işlemi başlatılıyor...")
 
 	// 1. Kullanıcılar (System Canary: seed.sedir@ddo-case.invalid İLK sırada olmalıdır!)
@@ -147,14 +242,7 @@ func SeedDatabase(ctx context.Context, pool *pgxpool.Pool, authSvc *auth.AuthSer
 	}
 
 	// 3. Duraklar
-	stations := []domain.Station{
-		{ID: "STAT_KADIKOY", Name: "Kadıköy İskele", Mode: domain.ModeFerry, Latitude: 40.9904, Longitude: 29.0254, ZoneID: 1},
-		{ID: "STAT_EMINONU", Name: "Eminönü İskele & Meydan", Mode: domain.ModeFerry, Latitude: 41.0175, Longitude: 28.9734, ZoneID: 1},
-		{ID: "STAT_KABATAS", Name: "Kabataş Tramvay", Mode: domain.ModeTram, Latitude: 41.0355, Longitude: 28.9922, ZoneID: 1},
-		{ID: "STAT_BAGCIAR", Name: "Bağcılar Meydan", Mode: domain.ModeTram, Latitude: 41.0341, Longitude: 28.8572, ZoneID: 2},
-		{ID: "STAT_AYRILIK", Name: "Ayrılık Çeşmesi", Mode: domain.ModeBus, Latitude: 40.9982, Longitude: 29.0305, ZoneID: 1},
-		{ID: "STAT_SARIYER", Name: "Sarıyer Merkez", Mode: domain.ModeBus, Latitude: 41.1685, Longitude: 29.0554, ZoneID: 3},
-	}
+	stations := DefaultSeedStations()
 
 	for _, s := range stations {
 		_, err := pool.Exec(ctx, `
@@ -169,20 +257,7 @@ func SeedDatabase(ctx context.Context, pool *pgxpool.Pool, authSvc *auth.AuthSer
 	}
 
 	// 4. Standart Tarife
-	tariff := domain.Tariff{
-		ID:                       "TARIFF_ISTANBUL_STD",
-		Name:                     "İstanbul Şehir İçi Entegre Tarife",
-		Mode:                     domain.ModeBus,
-		BaseFareKurus:            2000,   // 20.00 TL
-		StudentFareKurus:         1000,   // 10.00 TL
-		ElderlyFareKurus:         1500,   // 15.00 TL
-		Transfer1DiscountPct:     50,     // %50 (10.00 TL)
-		Transfer2DiscountPct:     75,     // %75 (5.00 TL)
-		NightSurchargePct:        50,     // %50 (30.00 TL)
-		StudentDailyLimit:        10,     // 10 indirimli biniş
-		MonthlyCappingLimitKurus: 150000, // 1500.00 TL tavan
-		IsActive:                 true,
-	}
+	tariff := DefaultSeedTariff()
 
 	_, err := pool.Exec(ctx, `
 		INSERT INTO jw_tariffs (
@@ -200,17 +275,7 @@ func SeedDatabase(ctx context.Context, pool *pgxpool.Pool, authSvc *auth.AuthSer
 	}
 
 	// 5. Validatörler
-	validators := []struct {
-		ID        string
-		LineID    string
-		StationID string
-		Plate     string
-	}{
-		{ID: "VAL_500T_01", LineID: "LINE_500T", StationID: "STAT_AYRILIK", Plate: "34 HO 1001"},
-		{ID: "VAL_14ES_01", LineID: "LINE_14ES", StationID: "STAT_KADIKOY", Plate: "34 HO 2002"},
-		{ID: "VAL_T1_01", LineID: "LINE_T1", StationID: "STAT_KABATAS", Plate: "T1-TR-01"},
-		{ID: "VAL_VAPUR_01", LineID: "LINE_VAPUR_KE", StationID: "STAT_KADIKOY", Plate: "SH-VAPUR-01"},
-	}
+	validators := DefaultSeedValidators()
 
 	for _, v := range validators {
 		_, err := pool.Exec(ctx, `
@@ -231,40 +296,7 @@ func SeedDatabase(ctx context.Context, pool *pgxpool.Pool, authSvc *auth.AuthSer
 		yolcuUIDPtr = &yolcuUID
 	}
 
-	demoCards := []domain.Card{
-		{
-			ID:           "CARD_TAM_001",
-			CardType:     domain.CardTypeTam,
-			BalanceKurus: 50000, // 500.00 TL (Not assigned to yolcu user, owned independently)
-			UserID:       nil,
-		},
-		{
-			ID:           "CARD_OGRENCI_001",
-			CardType:     domain.CardTypeOgrenci,
-			BalanceKurus: 25000, // 250.00 TL
-			UserID:       nil,
-		},
-		{
-			ID:           "CARD_YASLI_001",
-			CardType:     domain.CardTypeYasli,
-			BalanceKurus: 15000, // 150.00 TL
-			UserID:       nil,
-		},
-		{
-			ID:              "CARD_KARA_LISTE_001",
-			CardType:        domain.CardTypeTam,
-			BalanceKurus:    0,
-			IsBlacklisted:   true,
-			BlacklistReason: "Sahte kimlik tespiti (Kara liste demo)",
-			UserID:          nil,
-		},
-		{
-			ID:           "CARD_YOLCU_001",
-			CardType:     domain.CardTypeTam,
-			BalanceKurus: 50000, // 500.00 TL (Owned by yolcu@aktarbilet.gov.tr)
-			UserID:       yolcuUIDPtr,
-		},
-	}
+	demoCards := DefaultDemoCards(yolcuUIDPtr)
 
 	for _, c := range demoCards {
 		// Kart daha önce eklenmiş mi kontrol et
@@ -279,19 +311,6 @@ func SeedDatabase(ctx context.Context, pool *pgxpool.Pool, authSvc *auth.AuthSer
 			if err != nil {
 				return fmt.Errorf("kart seed hatası (%s): %w", c.ID, err)
 			}
-
-			// Başlangıç bakiye defter hareketi ekle (idempotent reference_id)
-			if c.BalanceKurus > 0 {
-				refID := fmt.Sprintf("SEED_INIT_%s", c.ID)
-				_, err = pool.Exec(ctx, `
-					INSERT INTO jw_ledger (id, card_id, entry_type, amount_kurus, balance_after_kurus, reference_id, description, created_at)
-					VALUES ($1, $2, 'dolum', $3, $3, $4, 'Başlangıç bakiye yüklemesi', NOW())
-					ON CONFLICT (reference_id) DO NOTHING
-				`, uuid.New(), c.ID, c.BalanceKurus, refID)
-				if err != nil {
-					return fmt.Errorf("ledger seed hatası (%s): %w", c.ID, err)
-				}
-			}
 		} else {
 			// Kart zaten var; balance_kurus DEĞİŞTİRİLMEZ! Yalnızca kara liste durumu güncellenir.
 			_, _ = pool.Exec(ctx, `
@@ -299,6 +318,19 @@ func SeedDatabase(ctx context.Context, pool *pgxpool.Pool, authSvc *auth.AuthSer
 				SET is_blacklisted = $1, blacklist_reason = $2, user_id = COALESCE(user_id, $3)
 				WHERE id = $4
 			`, c.IsBlacklisted, c.BlacklistReason, c.UserID, c.ID)
+		}
+
+		// Başlangıç bakiye defter hareketi ekle (idempotent reference_id)
+		if c.BalanceKurus > 0 {
+			refID := fmt.Sprintf("SEED_INIT_%s", c.ID)
+			_, err = pool.Exec(ctx, `
+				INSERT INTO jw_ledger (id, card_id, entry_type, amount_kurus, balance_after_kurus, reference_id, description, created_at)
+				VALUES ($1, $2, 'dolum', $3, $3, $4, 'Başlangıç bakiye yüklemesi', NOW())
+				ON CONFLICT (reference_id) DO NOTHING
+			`, uuid.New(), c.ID, c.BalanceKurus, refID)
+			if err != nil {
+				slog.Warn("Başlangıç ledger seed uyarısı", "card_id", c.ID, "error", err)
+			}
 		}
 	}
 

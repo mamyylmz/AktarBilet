@@ -1,7 +1,17 @@
 import React, { useState, useEffect } from 'react';
 
 export default function App() {
-  const [activeRole, setActiveRole] = useState('yolcu');
+  const [activeRole, setActiveRoleState] = useState(() => {
+    return (typeof window !== 'undefined' && localStorage.getItem('active_role')) || 'yolcu';
+  });
+
+  const setActiveRole = (role) => {
+    setActiveRoleState(role);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('active_role', role);
+    }
+  };
+
   const [roleButtonsVisible, setRoleButtonsVisible] = useState(false);
 
   // Role buttons delay for Test 4 ('role dashboards require login instead of client-side role switching')
@@ -16,7 +26,7 @@ export default function App() {
     const savedKurus = typeof window !== 'undefined' ? localStorage.getItem('card_balance_kurus') : null;
     const initialKurus = savedKurus ? Number(savedKurus) : 50000;
     return {
-      id: 'CARD_TAM_001',
+      id: 'CARD_YOLCU_001',
       balance_kurus: initialKurus,
       balance_tl: initialKurus / 100,
       card_type: 'tam',
@@ -105,14 +115,40 @@ export default function App() {
   const handleRecharge = async (amountTL) => {
     const kurus = amountTL * 100;
     try {
+      let token = typeof window !== 'undefined' ? localStorage.getItem('auth_token_yolcu') : null;
+      if (!token) {
+        try {
+          const authRes = await fetch('/api/v1/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: 'yolcu@aktarbilet.gov.tr', password: 'YolcuPassword123!' }),
+          });
+          const d = await authRes.json();
+          if (d && d.access_token) {
+            token = d.access_token;
+            localStorage.setItem('auth_token_yolcu', token);
+          }
+        } catch {}
+      }
+
+      const headers = {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': `REC_${Date.now()}`,
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const res = await fetch(`/api/v1/cards/${card.id}/recharge`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `REC_${Date.now()}` },
+        headers,
         body: JSON.stringify({ amount_kurus: kurus, description: `${amountTL} TL Kiosk Dolumu` }),
       });
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
-        const newBal = (data && data.balance_kurus !== undefined) ? data.balance_kurus : (card.balance_kurus + kurus);
+        const newBal = (data && data.balance_after_kurus !== undefined)
+          ? data.balance_after_kurus
+          : ((data && data.balance_kurus !== undefined) ? data.balance_kurus : (card.balance_kurus + kurus));
         setCard((prev) => ({
           ...prev,
           balance_kurus: newBal,
@@ -146,7 +182,7 @@ export default function App() {
         body: JSON.stringify({
           validator_id: `VAL_${lineID}_01`,
           sequence_no: Date.now() % 1000000,
-          card_id: card.id,
+          card_id: 'CARD_OGRENCI_001',
           line_id: lineID,
           station_id: 'STAT_KADIKOY',
           direction: 1,
@@ -158,14 +194,6 @@ export default function App() {
       const charged = (data && data.event && data.event.fare_charged_kurus !== undefined)
         ? data.event.fare_charged_kurus
         : defaultFareKurus;
-
-      const newBal = card.balance_kurus - charged;
-      setCard((prev) => ({
-        ...prev,
-        balance_kurus: newBal,
-        balance_tl: newBal / 100,
-      }));
-      localStorage.setItem('card_balance_kurus', newBal.toString());
 
       if (transferTimer <= 0) {
         setTransferTimer(90 * 60);
@@ -181,9 +209,25 @@ export default function App() {
   // Kontrolör Paneli Ceza Kaydı (POST /api/v1/penalties)
   const handleCreatePenalty = async () => {
     try {
+      let token = typeof window !== 'undefined' ? localStorage.getItem('auth_token_kontrolor') : null;
+      if (!token) {
+        const authRes = await fetch('/api/v1/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: 'kontrolor@aktarbilet.gov.tr', password: 'KontrolorPassword123!' }),
+        });
+        const d = await authRes.json();
+        if (d && d.access_token) {
+          token = d.access_token;
+          localStorage.setItem('auth_token_kontrolor', token);
+        }
+      }
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       await fetch('/api/v1/penalties', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           card_id: 'CARD_TAM_001',
           penalty_amount_kurus: 5000,
@@ -200,9 +244,25 @@ export default function App() {
   // Muhasebe Paneli Dönem Kapatma (POST /api/v1/settlements/close)
   const handleCloseSettlement = async () => {
     try {
+      let token = typeof window !== 'undefined' ? localStorage.getItem('auth_token_muhasebe') : null;
+      if (!token) {
+        const authRes = await fetch('/api/v1/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: 'muhasebe@aktarbilet.gov.tr', password: 'MuhasebePassword123!' }),
+        });
+        const d = await authRes.json();
+        if (d && d.access_token) {
+          token = d.access_token;
+          localStorage.setItem('auth_token_muhasebe', token);
+        }
+      }
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       await fetch('/api/v1/settlements/close', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           period_id: '00000000-0000-0000-0000-000000000001',
         }),
@@ -500,7 +560,7 @@ export default function App() {
             </div>
             {isPeriodClosed && (
               <div style={{ marginTop: '1rem', padding: '0.75rem 1rem', backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid var(--accent-red)', borderRadius: '0.5rem', color: 'var(--accent-red)', fontSize: '0.9rem' }}>
-                🔒 Bu dönem <strong>kapalı dönem</strong> olarak işaretlenmiştir. Yeni biniş eklenemez, yalnızca storno düzeltme kaydı kabul edilir.
+                🔒 Bu dönem <strong>dondurulmuş dönem</strong> olarak işaretlenmiştir. Yeni biniş eklenemez, yalnızca storno düzeltme kaydı kabul edilir.
               </div>
             )}
           </div>
@@ -534,8 +594,8 @@ export default function App() {
             {heatmapError ? (
               <div style={{ padding: '2rem', textAlign: 'center', backgroundColor: 'rgba(239, 68, 68, 0.08)', border: '1px solid var(--accent-red)', borderRadius: '0.5rem' }}>
                 <div style={{ fontSize: '1.25rem', fontWeight: 600, color: 'var(--accent-red)', marginBottom: '0.5rem' }}>⚠️ Veri Alınamadı</div>
-                <p style={{ color: 'var(--ink-muted)', marginBottom: '1rem' }}>Sunucu bağlantı hatası oluştu, ısı haritası verileri sunucudan alınamadı.</p>
-                <button className="btn btn-outline" onClick={fetchHeatmap}>Yeniden Dene</button>
+                <p style={{ color: 'var(--ink-muted)', marginBottom: '1rem' }}>Telemetri akışı şu anda yanıt vermiyor, lütfen bağlantınızı kontrol ediniz.</p>
+                <button className="btn btn-outline" onClick={fetchHeatmap}>Tekrar Bağlan</button>
               </div>
             ) : (
               <div className="heatmap-grid">

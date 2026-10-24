@@ -24,3 +24,24 @@ func TestConfig_EnvOverrides(t *testing.T) {
 		t.Fatalf("Çevre değişkeni PORT uygulanamadı, alınan: %s", cfg.Port)
 	}
 }
+
+func TestConfig_GetEnvInt(t *testing.T) {
+	// 1. Varsayılan değer
+	if val := getEnvInt("NON_EXISTENT_VAR", 42); val != 42 {
+		t.Fatalf("Varsayılan değer 42 dönmeli, alınan: %d", val)
+	}
+
+	// 2. Set edilmiş int
+	os.Setenv("TEST_INT_VAR", "123")
+	defer os.Unsetenv("TEST_INT_VAR")
+	if val := getEnvInt("TEST_INT_VAR", 42); val != 123 {
+		t.Fatalf("Çevre değişkeni 123 dönmeli, alınan: %d", val)
+	}
+
+	// 3. Geçersiz int
+	os.Setenv("TEST_INVALID_INT", "not-a-number")
+	defer os.Unsetenv("TEST_INVALID_INT")
+	if val := getEnvInt("TEST_INVALID_INT", 42); val != 42 {
+		t.Fatalf("Hatalı değerde varsayılan 42 dönmeli, alınan: %d", val)
+	}
+}

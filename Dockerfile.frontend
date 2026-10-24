@@ -21,6 +21,7 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # Custom nginx conf for SPA routing and proxying
 RUN echo 'server { \
     listen 3000; \
+    listen [::]:3000; \
     location / { \
         root /usr/share/nginx/html; \
         index index.html; \
@@ -42,6 +43,6 @@ USER appuser
 EXPOSE 3000
 
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
-    CMD wget -q -O /dev/null http://localhost:3000/ || exit 1
+    CMD wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]

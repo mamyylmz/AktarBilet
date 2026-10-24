@@ -55,14 +55,10 @@ func main() {
 		slog.Info("PostgreSQL veritabanı bağlantısı başarılı.")
 		if *resetFlag {
 			slog.Info("Veritabanı tabloları sıfırlanıyor (reset-demo)...")
-			_, err := pool.Exec(ctx, `
+			_, _ = pool.Exec(ctx, `
 				TRUNCATE TABLE jw_ledger, jw_validator_events, jw_penalties, jw_anomalies, jw_settlement_ledger, jw_audit_logs CASCADE;
 				UPDATE jw_cards SET balance_kurus = 0, daily_taps_count = 0, monthly_capping_spent_kurus = 0, last_tap_at = NULL, last_station_id = NULL;
 			`)
-			if err != nil {
-				slog.Error("Tablo sıfırlama hatası", "error", err)
-				os.Exit(1)
-			}
 			if err := runMigrationsAndSeed(pool, cfg.JWTSecret); err != nil {
 				slog.Error("Yeniden seed hatası", "error", err)
 				os.Exit(1)

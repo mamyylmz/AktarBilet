@@ -101,3 +101,27 @@ func BenchmarkAnomaly_HighThroughput1MPerHour(b *testing.B) {
 		detector.CheckTap(ctx, "BENCH_CARD", "STAT_AYRILIK", t0.Add(time.Duration(i)*time.Second), &evID)
 	}
 }
+
+func TestAnomaly_GetAnomalies(t *testing.T) {
+	ctx := context.Background()
+	detector := NewAnomalyDetector()
+	setupTestStations(detector)
+
+	cardID := "CARD_ANOMALY_LIST"
+	t1 := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
+	evID1 := uuid.New()
+	detector.CheckTap(ctx, cardID, "STAT_KADIKOY", t1, &evID1)
+
+	// Anomali binişi: 3 dakika sonra Sarıyer
+	t2 := t1.Add(3 * time.Minute)
+	evID2 := uuid.New()
+	detector.CheckTap(ctx, cardID, "STAT_SARIYER", t2, &evID2)
+
+	anomalies := detector.GetAnomalies()
+	if len(anomalies) != 1 {
+		t.Fatalf("1 anomali kaydı bekleniyordu, bulunan: %d", len(anomalies))
+	}
+	if anomalies[0].AnomalyType != domain.AnomalyImpossibleSpeed {
+		t.Fatalf("Beklenen anomali türü IMPOSSIBLE_TRAVEL_SPEED, bulunan: %s", anomalies[0].AnomalyType)
+	}
+}

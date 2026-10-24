@@ -165,7 +165,7 @@ func (s *SyncService) ingestPersistent(ctx context.Context, pool *pgxpool.Pool, 
 	rows, err := pool.Query(ctx, `
 		SELECT line_id, station_id, direction, tapped_at, is_transfer, transfer_level
 		FROM jw_validator_events
-		WHERE card_id = $1 AND tapped_at >= $2 - INTERVAL '90 minutes' AND status = 'PROCESSED'
+		WHERE card_id = $1 AND tapped_at >= ($2::timestamptz - INTERVAL '90 minutes') AND tapped_at < $2::timestamptz AND status = 'PROCESSED'
 		ORDER BY tapped_at ASC
 	`, req.CardID, req.TappedAt)
 	var history []pricing.TripHistoryItem

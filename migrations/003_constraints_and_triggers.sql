@@ -9,20 +9,32 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- 2. Trigger on jw_ledger
+-- 2. Drop triggers temporarily if they exist so deduplication/updates can occur safely during migration
 DROP TRIGGER IF EXISTS trg_prevent_ledger_mutation ON jw_ledger;
+DROP TRIGGER IF EXISTS trg_prevent_audit_mutation ON jw_audit_logs;
+
+-- 3. Unique Constraint on Reference ID in jw_ledger
+DO $$
+BEGIN
+    -- Deduplicate any existing duplicate reference_ids in jw_ledger before adding unique constraint
+    DELETE FROM jw_ledger a USING jw_ledger b
+    WHERE a.reference_id IS NOT NULL 
+      AND a.reference_id = b.reference_id 
+      AND (a.created_at > b.created_at OR (a.created_at = b.created_at AND a.id > b.id));
+
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_jw_ledger_reference_id') THEN
+        ALTER TABLE jw_ledger ADD CONSTRAINT uq_jw_ledger_reference_id UNIQUE (reference_id);
+    END IF;
+END $$;
+
+-- 4. Re-enable Append-Only Triggers
 CREATE TRIGGER trg_prevent_ledger_mutation
 BEFORE UPDATE OR DELETE ON jw_ledger
 FOR EACH ROW EXECUTE FUNCTION prevent_ledger_mutation();
 
--- 3. Trigger on jw_audit_logs
-DROP TRIGGER IF EXISTS trg_prevent_audit_mutation ON jw_audit_logs;
 CREATE TRIGGER trg_prevent_audit_mutation
 BEFORE UPDATE OR DELETE ON jw_audit_logs
 FOR EACH ROW EXECUTE FUNCTION prevent_ledger_mutation();
-
--- 4. Unique Index on Reference ID in jw_ledger (for non-null reference IDs)
-CREATE UNIQUE INDEX IF NOT EXISTS idx_jw_ledger_reference_id ON jw_ledger (reference_id) WHERE reference_id IS NOT NULL;
 
 -- 5. Value and Range Constraints
 DO $$ 

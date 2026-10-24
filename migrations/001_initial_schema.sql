@@ -73,12 +73,10 @@ CREATE TABLE IF NOT EXISTS jw_ledger (
     entry_type VARCHAR(50) NOT NULL CHECK (entry_type IN ('dolum', 'binis', 'iade', 'ceza', 'storno_duzeltme')),
     amount_kurus BIGINT NOT NULL, -- Pozitif: dolum/iade, Negatif: biniş/ceza
     balance_after_kurus BIGINT NOT NULL,
-    reference_id VARCHAR(255), -- Validatör event ID veya ödeme referansı
+    reference_id VARCHAR(255) CONSTRAINT uq_jw_ledger_reference_id UNIQUE, -- Validatör event ID veya ödeme referansı
     description TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_jw_ledger_reference_id ON jw_ledger (reference_id) WHERE reference_id IS NOT NULL;
 
 -- 7. Tarifeler (Kuruş cinsinden tamsayı)
 CREATE TABLE IF NOT EXISTS jw_tariffs (

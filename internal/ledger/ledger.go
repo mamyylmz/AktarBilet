@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mamyylmz/AktarBilet/internal/domain"
 )
@@ -16,6 +17,7 @@ var (
 	ErrInsufficientBalance = errors.New("yetersiz bakiye")
 	ErrCardBlacklisted     = errors.New("kart kara listede")
 	ErrInvalidAmount       = errors.New("geçersiz tutar")
+	ErrCardNotFound        = errors.New("kart bulunamadı")
 )
 
 type LedgerService interface {
@@ -68,7 +70,7 @@ func (m *MemoryLedger) ProcessTap(
 	refID, desc string,
 	allowNegativeLimit domain.Kurus,
 ) (*domain.LedgerEntry, error) {
-	if fare < 0 {
+	if fare <= 0 {
 		return nil, ErrInvalidAmount
 	}
 
@@ -77,9 +79,18 @@ func (m *MemoryLedger) ProcessTap(
 	lock.Lock()
 	defer lock.Unlock()
 
+	// İdempotansi Kontrolü: Aynı refID ile biniş daha önce işlenmişse mükerrer düşme!
+	if refID != "" {
+		for _, e := range m.entries[cardID] {
+			if e.ReferenceID == refID {
+				return &e, nil
+			}
+		}
+	}
+
 	card, ok := m.cards[cardID]
 	if !ok {
-		return nil, fmt.Errorf("kart bulunamadı: %s", cardID)
+		return nil, fmt.Errorf("%w: %s", ErrCardNotFound, cardID)
 	}
 
 	if card.IsBlacklisted {
@@ -137,7 +148,7 @@ func (m *MemoryLedger) Recharge(
 
 	card, ok := m.cards[cardID]
 	if !ok {
-		return nil, fmt.Errorf("kart bulunamadı: %s", cardID)
+		return nil, fmt.Errorf("%w: %s", ErrCardNotFound, cardID)
 	}
 
 	newBalance := card.BalanceKurus + amount
@@ -174,7 +185,7 @@ func (m *MemoryLedger) Refund(
 
 	card, ok := m.cards[cardID]
 	if !ok {
-		return nil, fmt.Errorf("kart bulunamadı: %s", cardID)
+		return nil, fmt.Errorf("%w: %s", ErrCardNotFound, cardID)
 	}
 
 	newBalance := card.BalanceKurus + amount
@@ -201,13 +212,17 @@ func (m *MemoryLedger) StornoCorrection(
 	amount domain.Kurus,
 	refID, desc string,
 ) (*domain.LedgerEntry, error) {
+	if amount == 0 {
+		return nil, ErrInvalidAmount
+	}
+
 	lock := m.getCardLock(cardID)
 	lock.Lock()
 	defer lock.Unlock()
 
 	card, ok := m.cards[cardID]
 	if !ok {
-		return nil, fmt.Errorf("kart bulunamadı: %s", cardID)
+		return nil, fmt.Errorf("%w: %s", ErrCardNotFound, cardID)
 	}
 
 	newBalance := card.BalanceKurus + amount
@@ -235,7 +250,7 @@ func (m *MemoryLedger) GetCardBalance(ctx context.Context, cardID string) (domai
 
 	card, ok := m.cards[cardID]
 	if !ok {
-		return 0, fmt.Errorf("kart bulunamadı: %s", cardID)
+		return 0, fmt.Errorf("%w: %s", ErrCardNotFound, cardID)
 	}
 	return card.BalanceKurus, nil
 }
@@ -244,6 +259,10 @@ func (m *MemoryLedger) GetCardLedger(ctx context.Context, cardID string) ([]doma
 	lock := m.getCardLock(cardID)
 	lock.Lock()
 	defer lock.Unlock()
+
+	if _, ok := m.cards[cardID]; !ok {
+		return nil, fmt.Errorf("%w: %s", ErrCardNotFound, cardID)
+	}
 
 	history, ok := m.entries[cardID]
 	if !ok {
@@ -254,12 +273,22 @@ func (m *MemoryLedger) GetCardLedger(ctx context.Context, cardID string) ([]doma
 	return result, nil
 }
 
+type DBTxStarter interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // PostgresLedger implements PostgreSQL with row-level locking (SELECT ... FOR UPDATE)
 type PostgresLedger struct {
-	pool *pgxpool.Pool
+	pool DBTxStarter
 }
 
 func NewPostgresLedger(pool *pgxpool.Pool) *PostgresLedger {
+	return &PostgresLedger{pool: pool}
+}
+
+func NewPostgresLedgerWithStarter(pool DBTxStarter) *PostgresLedger {
 	return &PostgresLedger{pool: pool}
 }
 
@@ -338,13 +367,13 @@ func (p *PostgresLedger) ProcessTap(
 		BalanceAfterKurus: newBalance,
 		ReferenceID:       refID,
 		Description:       desc,
-		CreatedAt:         time.Now(),
 	}
 
-	_, err = tx.Exec(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO jw_ledger (id, card_id, entry_type, amount_kurus, balance_after_kurus, reference_id, description, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, entry.ID, entry.CardID, entry.EntryType, entry.AmountKurus, entry.BalanceAfterKurus, entry.ReferenceID, entry.Description, entry.CreatedAt)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+		RETURNING created_at
+	`, entry.ID, entry.CardID, entry.EntryType, entry.AmountKurus, entry.BalanceAfterKurus, entry.ReferenceID, entry.Description).Scan(&entry.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("defter kaydı eklenemedi: %w", err)
 	}
@@ -418,13 +447,13 @@ func (p *PostgresLedger) Recharge(
 		BalanceAfterKurus: newBalance,
 		ReferenceID:       refID,
 		Description:       desc,
-		CreatedAt:         time.Now(),
 	}
 
-	_, err = tx.Exec(ctx, `
+	err = tx.QueryRow(ctx, `
 		INSERT INTO jw_ledger (id, card_id, entry_type, amount_kurus, balance_after_kurus, reference_id, description, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, entry.ID, entry.CardID, entry.EntryType, entry.AmountKurus, entry.BalanceAfterKurus, entry.ReferenceID, entry.Description, entry.CreatedAt)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+		RETURNING created_at
+	`, entry.ID, entry.CardID, entry.EntryType, entry.AmountKurus, entry.BalanceAfterKurus, entry.ReferenceID, entry.Description).Scan(&entry.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("defter kaydı eklenemedi: %w", err)
 	}
