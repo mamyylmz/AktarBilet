@@ -125,6 +125,16 @@ func (m *MemoryLedger) Recharge(
 	lock.Lock()
 	defer lock.Unlock()
 
+	// İdempotansi kontrolü
+	if refID != "" {
+		for _, e := range m.entries[cardID] {
+			if e.ReferenceID == refID {
+				entryCopy := e
+				return &entryCopy, nil
+			}
+		}
+	}
+
 	card, ok := m.cards[cardID]
 	if !ok {
 		return nil, fmt.Errorf("kart bulunamadı: %s", cardID)
@@ -266,6 +276,26 @@ func (p *PostgresLedger) ProcessTap(
 	}
 	defer tx.Rollback(ctx)
 
+	// Idempotency: refID daha önce işlenmişse aynısını dön
+	if refID != "" {
+		var existing domain.LedgerEntry
+		var existingRef, existingDesc *string
+		err := tx.QueryRow(ctx, `
+			SELECT id, card_id, entry_type, amount_kurus, balance_after_kurus, reference_id, description, created_at
+			FROM jw_ledger
+			WHERE reference_id = $1
+		`, refID).Scan(&existing.ID, &existing.CardID, &existing.EntryType, &existing.AmountKurus, &existing.BalanceAfterKurus, &existingRef, &existingDesc, &existing.CreatedAt)
+		if err == nil {
+			if existingRef != nil {
+				existing.ReferenceID = *existingRef
+			}
+			if existingDesc != nil {
+				existing.Description = *existingDesc
+			}
+			return &existing, nil
+		}
+	}
+
 	// SELECT ... FOR UPDATE ile kart bazlı serileştirme (ADR-002)
 	var currentBalance domain.Kurus
 	var isBlacklisted bool
@@ -337,6 +367,26 @@ func (p *PostgresLedger) Recharge(
 		return nil, fmt.Errorf("tx begin hatası: %w", err)
 	}
 	defer tx.Rollback(ctx)
+
+	// Idempotency kontrolü: Aynı reference_id daha önce işlenmişse aynısını dön
+	if refID != "" {
+		var existing domain.LedgerEntry
+		var existingRef, existingDesc *string
+		err := tx.QueryRow(ctx, `
+			SELECT id, card_id, entry_type, amount_kurus, balance_after_kurus, reference_id, description, created_at
+			FROM jw_ledger
+			WHERE reference_id = $1
+		`, refID).Scan(&existing.ID, &existing.CardID, &existing.EntryType, &existing.AmountKurus, &existing.BalanceAfterKurus, &existingRef, &existingDesc, &existing.CreatedAt)
+		if err == nil {
+			if existingRef != nil {
+				existing.ReferenceID = *existingRef
+			}
+			if existingDesc != nil {
+				existing.Description = *existingDesc
+			}
+			return &existing, nil
+		}
+	}
 
 	var currentBalance domain.Kurus
 	err = tx.QueryRow(ctx, `

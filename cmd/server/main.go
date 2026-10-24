@@ -142,6 +142,16 @@ func runMigrationsAndSeed(pool *pgxpool.Pool, jwtSecret string) error {
 		}
 	}
 
+	// 003_constraints_and_triggers.sql oku ve uygula
+	migration3, err := os.ReadFile("migrations/003_constraints_and_triggers.sql")
+	if err == nil {
+		if _, err := pool.Exec(ctx, string(migration3)); err != nil {
+			slog.Warn("Migrasyon 3 çalıştırma uyarısı", "error", err)
+		} else {
+			slog.Info("003_constraints_and_triggers.sql başarıyla uygulandı.")
+		}
+	}
+
 	// Seed verilerini çalıştır
 	authSvc := auth.NewAuthService(jwtSecret)
 	return seed.SeedDatabase(ctx, pool, authSvc)

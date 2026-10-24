@@ -55,9 +55,9 @@ CREATE TABLE IF NOT EXISTS jw_cards (
     balance_kurus BIGINT NOT NULL DEFAULT 0, -- Kuruş cinsinden
     is_blacklisted BOOLEAN NOT NULL DEFAULT FALSE,
     blacklist_reason TEXT,
-    daily_taps_count INT NOT NULL DEFAULT 0,
+    daily_taps_count INT NOT NULL DEFAULT 0 CHECK (daily_taps_count >= 0),
     last_daily_reset_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    monthly_capping_spent_kurus BIGINT NOT NULL DEFAULT 0,
+    monthly_capping_spent_kurus BIGINT NOT NULL DEFAULT 0 CHECK (monthly_capping_spent_kurus >= 0),
     last_monthly_reset_date DATE NOT NULL DEFAULT CURRENT_DATE,
     last_tap_at TIMESTAMPTZ,
     last_station_id VARCHAR(50) REFERENCES jw_stations(id),
@@ -78,19 +78,21 @@ CREATE TABLE IF NOT EXISTS jw_ledger (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jw_ledger_reference_id ON jw_ledger (reference_id) WHERE reference_id IS NOT NULL;
+
 -- 7. Tarifeler (Kuruş cinsinden tamsayı)
 CREATE TABLE IF NOT EXISTS jw_tariffs (
     id VARCHAR(50) PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     mode VARCHAR(50) NOT NULL,
-    base_fare_kurus BIGINT NOT NULL,
-    student_fare_kurus BIGINT NOT NULL,
-    elderly_fare_kurus BIGINT NOT NULL,
-    transfer1_discount_pct INT NOT NULL DEFAULT 50, -- %50 indirim
-    transfer2_discount_pct INT NOT NULL DEFAULT 75, -- %75 indirim
-    night_surcharge_pct INT NOT NULL DEFAULT 50,    -- %50 gece zammı (00:00 - 05:59)
-    student_daily_limit INT NOT NULL DEFAULT 10,     -- Günde maks 10 indirimli biniş
-    monthly_capping_limit_kurus BIGINT NOT NULL DEFAULT 150000, -- 1500 TL tavan
+    base_fare_kurus BIGINT NOT NULL CHECK (base_fare_kurus >= 0),
+    student_fare_kurus BIGINT NOT NULL CHECK (student_fare_kurus >= 0),
+    elderly_fare_kurus BIGINT NOT NULL CHECK (elderly_fare_kurus >= 0),
+    transfer1_discount_pct INT NOT NULL DEFAULT 50 CHECK (transfer1_discount_pct >= 0 AND transfer1_discount_pct <= 100),
+    transfer2_discount_pct INT NOT NULL DEFAULT 75 CHECK (transfer2_discount_pct >= 0 AND transfer2_discount_pct <= 100),
+    night_surcharge_pct INT NOT NULL DEFAULT 50 CHECK (night_surcharge_pct >= 0),
+    student_daily_limit INT NOT NULL DEFAULT 10 CHECK (student_daily_limit >= 0),
+    monthly_capping_limit_kurus BIGINT NOT NULL DEFAULT 150000 CHECK (monthly_capping_limit_kurus >= 0),
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -159,7 +161,7 @@ CREATE TABLE IF NOT EXISTS jw_penalties (
     card_id VARCHAR(64) NOT NULL REFERENCES jw_cards(id),
     line_id VARCHAR(50) REFERENCES jw_lines(id),
     station_id VARCHAR(50) REFERENCES jw_stations(id),
-    penalty_amount_kurus BIGINT NOT NULL,
+    penalty_amount_kurus BIGINT NOT NULL CHECK (penalty_amount_kurus > 0),
     reason VARCHAR(100) NOT NULL CHECK (reason IN ('kartsiz_binis', 'usulsuz_kart_kullanimi', 'sahte_kart', 'diger')),
     issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     notes TEXT
@@ -190,3 +192,21 @@ CREATE TABLE IF NOT EXISTS jw_audit_logs (
     ip_address VARCHAR(50),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 14. Append-Only Defter ve Audit Triggerları
+CREATE OR REPLACE FUNCTION prevent_ledger_mutation()
+RETURNS TRIGGER AS $$
+BEGIN
+    RAISE EXCEPTION 'jw_ledger is append-only: UPDATE and DELETE are prohibited' USING ERRCODE = '55000';
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_prevent_ledger_mutation ON jw_ledger;
+CREATE TRIGGER trg_prevent_ledger_mutation
+BEFORE UPDATE OR DELETE ON jw_ledger
+FOR EACH ROW EXECUTE FUNCTION prevent_ledger_mutation();
+
+DROP TRIGGER IF EXISTS trg_prevent_audit_mutation ON jw_audit_logs;
+CREATE TRIGGER trg_prevent_audit_mutation
+BEFORE UPDATE OR DELETE ON jw_audit_logs
+FOR EACH ROW EXECUTE FUNCTION prevent_ledger_mutation();
