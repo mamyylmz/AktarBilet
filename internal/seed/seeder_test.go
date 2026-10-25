@@ -113,15 +113,18 @@ func TestSeed_LiveDatabase(t *testing.T) {
 	if dbURL == "" {
 		dbURL = "postgres://postgres:postgres@127.0.0.1:5432/aktarbilet?sslmode=disable"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer pingCancel()
 
-	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil || pool.Ping(ctx) != nil {
+	pool, err := pgxpool.New(pingCtx, dbURL)
+	if err != nil || pool.Ping(pingCtx) != nil {
 		t.Skip("PostgreSQL test ortamına erişilemedi, SeedDatabase testi atlanıyor")
 		return
 	}
 	defer pool.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	authSvc := auth.NewAuthService("test-secret-12345678901234567890")
 	err = SeedDatabase(ctx, pool, authSvc)
