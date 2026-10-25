@@ -2,13 +2,17 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mamyylmz/AktarBilet/internal/anomaly"
 	"github.com/mamyylmz/AktarBilet/internal/auth"
 	"github.com/mamyylmz/AktarBilet/internal/domain"
@@ -621,5 +625,281 @@ func TestAPI_ComprehensiveBranches(t *testing.T) {
 	rig.router.ServeHTTP(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("Yolcu muhasebe işlemine 403 dönmeli, alınan: %d", w.Code)
+	}
+}
+
+type mockAPIRow struct {
+	scanFunc func(dest ...any) error
+}
+
+func (m *mockAPIRow) Scan(dest ...any) error {
+	if m.scanFunc != nil {
+		return m.scanFunc(dest...)
+	}
+	return nil
+}
+
+type mockAPIRows struct {
+	scanFunc func(dest ...any) error
+	count    int
+	idx      int
+}
+
+func (m *mockAPIRows) Close()                                       {}
+func (m *mockAPIRows) Err() error                                   { return nil }
+func (m *mockAPIRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
+func (m *mockAPIRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
+func (m *mockAPIRows) Next() bool {
+	if m.idx < m.count {
+		m.idx++
+		return true
+	}
+	return false
+}
+func (m *mockAPIRows) Scan(dest ...any) error {
+	if m.scanFunc != nil {
+		return m.scanFunc(dest...)
+	}
+	return nil
+}
+func (m *mockAPIRows) Values() ([]any, error) { return nil, nil }
+func (m *mockAPIRows) RawValues() [][]byte    { return nil }
+func (m *mockAPIRows) Conn() *pgx.Conn        { return nil }
+
+type mockAPIPool struct {
+	execFunc     func(sql string, args ...any) (pgconn.CommandTag, error)
+	queryFunc    func(sql string, args ...any) (pgx.Rows, error)
+	queryRowFunc func(sql string, args ...any) pgx.Row
+}
+
+func (m *mockAPIPool) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+	if m.execFunc != nil {
+		return m.execFunc(sql, arguments...)
+	}
+	return pgconn.NewCommandTag("UPDATE 1"), nil
+}
+
+func (m *mockAPIPool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if m.queryFunc != nil {
+		return m.queryFunc(sql, args...)
+	}
+	return &mockAPIRows{}, nil
+}
+
+func (m *mockAPIPool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if m.queryRowFunc != nil {
+		return m.queryRowFunc(sql, args...)
+	}
+	return &mockAPIRow{}
+}
+
+func TestAPI_DatabaseQueryMocks(t *testing.T) {
+	rig := setupTestRig()
+	pool := &mockAPIPool{}
+	h := NewAPIHandler(nil, rig.authSvc, pricing.NewPricingEngine(), rig.ledgerSvc, rig.syncSvc, rig.settleSvc, rig.anomalyDet)
+	h.SetDBPool(pool)
+	router := SetupRouter(h, "f85f26")
+
+	adminToken := rig.token(rig.adminUser)
+	kontrolorToken := rig.token(rig.kontrolor)
+	muhasebeToken := rig.token(rig.muhasebe)
+
+	currentRole := domain.RoleAdmin
+	pool.queryRowFunc = func(sql string, args ...any) pgx.Row {
+		if strings.Contains(sql, "FROM jw_tf_users") {
+			return &mockAPIRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*domain.UserRole) = currentRole
+					return nil
+				},
+			}
+		}
+		if strings.Contains(sql, "EXISTS") {
+			return &mockAPIRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*bool) = true
+					return nil
+				},
+			}
+		}
+		if strings.Contains(sql, "FROM jw_settlement_periods") {
+			return &mockAPIRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*bool) = true
+					return nil
+				},
+			}
+		}
+		return &mockAPIRow{}
+	}
+
+	// 1. ListLines from DB
+	pool.queryFunc = func(sql string, args ...any) (pgx.Rows, error) {
+		return &mockAPIRows{
+			count: 1,
+			scanFunc: func(dest ...any) error {
+				*dest[0].(*string) = "LINE_500T"
+				*dest[1].(*string) = "500T Tuzla"
+				*dest[2].(*domain.LineMode) = domain.ModeBus
+				*dest[3].(*string) = "belediye"
+				*dest[4].(*bool) = true
+				*dest[5].(*time.Time) = time.Now()
+				return nil
+			},
+		}, nil
+	}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/lines", nil)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListLines from DB 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 2. ListStations from DB
+	pool.queryFunc = func(sql string, args ...any) (pgx.Rows, error) {
+		return &mockAPIRows{
+			count: 1,
+			scanFunc: func(dest ...any) error {
+				*dest[0].(*string) = "STAT_KADIKOY"
+				*dest[1].(*string) = "Kadıköy İskele"
+				*dest[2].(*domain.LineMode) = domain.ModeFerry
+				*dest[3].(*float64) = 40.99
+				*dest[4].(*float64) = 29.02
+				*dest[5].(*int) = 1
+				*dest[6].(*time.Time) = time.Now()
+				return nil
+			},
+		}, nil
+	}
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/stations", nil)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListStations from DB 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 3. ListTariffs from DB
+	pool.queryFunc = func(sql string, args ...any) (pgx.Rows, error) {
+		return &mockAPIRows{
+			count: 1,
+			scanFunc: func(dest ...any) error {
+				*dest[0].(*string) = "TAR_1"
+				*dest[1].(*string) = "Tarife 1"
+				*dest[2].(*domain.LineMode) = domain.ModeBus
+				*dest[3].(*domain.Kurus) = 2000
+				*dest[4].(*domain.Kurus) = 1000
+				*dest[5].(*domain.Kurus) = 1500
+				*dest[6].(*int) = 50
+				*dest[7].(*int) = 75
+				*dest[8].(*int) = 50
+				*dest[9].(*int) = 10
+				*dest[10].(*domain.Kurus) = 150000
+				*dest[11].(*bool) = true
+				*dest[12].(*time.Time) = time.Now()
+				return nil
+			},
+		}, nil
+	}
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/tariffs", nil)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListTariffs from DB 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 4. CreatePenalty with DB checks
+	currentRole = domain.RoleKontrolor
+	body, _ := json.Marshal(map[string]interface{}{
+		"card_id":              "CARD_YOLCU_001",
+		"penalty_amount_kurus": 5000,
+		"reason":               "kartsiz_binis",
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/penalties", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+kontrolorToken)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreatePenalty with DB 201 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 5. ListPenalties from DB
+	currentRole = domain.RoleAdmin
+	pool.queryFunc = func(sql string, args ...any) (pgx.Rows, error) {
+		return &mockAPIRows{
+			count: 1,
+			scanFunc: func(dest ...any) error {
+				*dest[0].(*uuid.UUID) = uuid.New()
+				*dest[1].(*uuid.UUID) = uuid.New()
+				*dest[2].(*string) = "CARD_1"
+				*dest[3].(*string) = "LINE_1"
+				*dest[4].(*string) = "STAT_1"
+				*dest[5].(*domain.Kurus) = 5000
+				*dest[6].(*domain.PenaltyReason) = domain.PenaltyKartsizBinis
+				*dest[7].(*time.Time) = time.Now()
+				*dest[8].(*string) = "Notes"
+				return nil
+			},
+		}, nil
+	}
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/penalties", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListPenalties from DB 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 6. GetHeatmap from DB
+	pool.queryFunc = func(sql string, args ...any) (pgx.Rows, error) {
+		return &mockAPIRows{
+			count: 1,
+			scanFunc: func(dest ...any) error {
+				*dest[0].(*string) = "LINE_500T"
+				*dest[1].(*string) = "500T Tuzla"
+				*dest[2].(*string) = "bus"
+				*dest[3].(*string) = "belediye"
+				*dest[4].(*int) = 250
+				*dest[5].(*float64) = 0.25
+				*dest[6].(*string) = "MEDIUM"
+				return nil
+			},
+		}, nil
+	}
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/reports/heatmap", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetHeatmap from DB 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 7. CloseSettlementPeriod with DB
+	currentRole = domain.RoleMuhasebe
+	pID := uuid.New()
+	pool.execFunc = func(sql string, args ...any) (pgconn.CommandTag, error) {
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	}
+	body, _ = json.Marshal(map[string]interface{}{"period_id": pID.String()})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/settlements/close", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+muhasebeToken)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CloseSettlementPeriod with DB 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 8. StornoSettlement with DB
+	body, _ = json.Marshal(map[string]interface{}{
+		"period_id":    pID.String(),
+		"operator":     "belediye",
+		"amount_kurus": 500,
+		"reason":       "Mock storno",
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/settlements/storno", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+muhasebeToken)
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("StornoSettlement with DB 200 dönmeli, alınan: %d", w.Code)
 	}
 }

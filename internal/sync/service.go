@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mamyylmz/AktarBilet/internal/domain"
 	"github.com/mamyylmz/AktarBilet/internal/ledger"
@@ -19,12 +21,18 @@ var (
 	ErrDuplicateEvent = errors.New("mükerrer validatör olayı (idempotent)")
 )
 
+type SyncDBPool interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 type SyncService struct {
 	mu            sync.Mutex
 	pricingEngine *pricing.PricingEngine
 	ledgerService ledger.LedgerService
 	negativeLimit domain.Kurus
-	pool          *pgxpool.Pool
+	pool          SyncDBPool
 	processedKeys map[string]*domain.ValidatorEvent
 	cardsStore    map[string]*domain.Card
 	tripHistories map[string][]pricing.TripHistoryItem
@@ -46,6 +54,16 @@ func NewSyncService(
 }
 
 func (s *SyncService) SetPool(pool *pgxpool.Pool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if pool == nil {
+		s.pool = nil
+	} else {
+		s.pool = pool
+	}
+}
+
+func (s *SyncService) SetDBPool(pool SyncDBPool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pool = pool
@@ -82,7 +100,7 @@ func (s *SyncService) IngestOfflineEvent(ctx context.Context, req IngestEventReq
 	return s.ingestMemory(ctx, req)
 }
 
-func (s *SyncService) ingestPersistent(ctx context.Context, pool *pgxpool.Pool, req IngestEventRequest) (*domain.ValidatorEvent, error) {
+func (s *SyncService) ingestPersistent(ctx context.Context, pool SyncDBPool, req IngestEventRequest) (*domain.ValidatorEvent, error) {
 	// 1. İdempotansi Kontrolü: jw_validator_events tablosunu sorgula
 	var existing domain.ValidatorEvent
 	var rejectionReasonSql *string

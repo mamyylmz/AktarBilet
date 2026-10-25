@@ -302,13 +302,13 @@ type mockLedgerTx struct {
 }
 
 func (m *mockLedgerTx) Begin(ctx context.Context) (pgx.Tx, error) { return m, nil }
-func (m *mockLedgerTx) Commit(ctx context.Context) error         { return nil }
-func (m *mockLedgerTx) Rollback(ctx context.Context) error       { return nil }
+func (m *mockLedgerTx) Commit(ctx context.Context) error          { return nil }
+func (m *mockLedgerTx) Rollback(ctx context.Context) error        { return nil }
 func (m *mockLedgerTx) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
 	return 0, nil
 }
 func (m *mockLedgerTx) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults { return nil }
-func (m *mockLedgerTx) LargeObjects() pgx.LargeObjects                                { return pgx.LargeObjects{} }
+func (m *mockLedgerTx) LargeObjects() pgx.LargeObjects                               { return pgx.LargeObjects{} }
 func (m *mockLedgerTx) Prepare(ctx context.Context, name, sql string) (*pgconn.StatementDescription, error) {
 	return nil, nil
 }

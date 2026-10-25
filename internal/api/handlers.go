@@ -11,6 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mamyylmz/AktarBilet/internal/anomaly"
 	"github.com/mamyylmz/AktarBilet/internal/auth"
@@ -21,8 +23,14 @@ import (
 	"github.com/mamyylmz/AktarBilet/internal/sync"
 )
 
+type APIDBPool interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 type APIHandler struct {
-	pool          *pgxpool.Pool
+	pool          APIDBPool
 	authSvc       *auth.AuthService
 	pricingEngine *pricing.PricingEngine
 	ledgerSvc     ledger.LedgerService
@@ -40,8 +48,12 @@ func NewAPIHandler(
 	settleSvc *settlement.SettlementService,
 	anomalyDet *anomaly.AnomalyDetector,
 ) *APIHandler {
+	var p APIDBPool
+	if pool != nil {
+		p = pool
+	}
 	return &APIHandler{
-		pool:          pool,
+		pool:          p,
 		authSvc:       authSvc,
 		pricingEngine: pricingEngine,
 		ledgerSvc:     ledgerSvc,
@@ -49,6 +61,10 @@ func NewAPIHandler(
 		settleSvc:     settleSvc,
 		anomalyDet:    anomalyDet,
 	}
+}
+
+func (h *APIHandler) SetDBPool(pool APIDBPool) {
+	h.pool = pool
 }
 
 // 1. Sağlık Kontrolleri
@@ -60,10 +76,12 @@ func (h *APIHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	if h.pool != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
-		if err := h.pool.Ping(ctx); err != nil {
-			dbStatus = fmt.Sprintf("unreachable: %v", err)
-			statusStr = "DOWN"
-			httpStatus = http.StatusServiceUnavailable
+		if pinger, ok := h.pool.(interface{ Ping(context.Context) error }); ok {
+			if err := pinger.Ping(ctx); err != nil {
+				dbStatus = fmt.Sprintf("unreachable: %v", err)
+				statusStr = "DOWN"
+				httpStatus = http.StatusServiceUnavailable
+			}
 		}
 	} else {
 		dbStatus = "healthy"

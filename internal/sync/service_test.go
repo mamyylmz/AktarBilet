@@ -2,9 +2,14 @@ package sync
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mamyylmz/AktarBilet/internal/domain"
 	"github.com/mamyylmz/AktarBilet/internal/ledger"
 	"github.com/mamyylmz/AktarBilet/internal/pricing"
@@ -295,5 +300,325 @@ func TestSyncService_Errors(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("Olmayan kartta hata bekleniyordu")
+	}
+}
+
+type mockSyncRow struct {
+	scanFunc func(dest ...any) error
+}
+
+func (m *mockSyncRow) Scan(dest ...any) error {
+	if m.scanFunc != nil {
+		return m.scanFunc(dest...)
+	}
+	return nil
+}
+
+type mockSyncRows struct {
+	items []pricing.TripHistoryItem
+	idx   int
+}
+
+func (m *mockSyncRows) Close()                                       {}
+func (m *mockSyncRows) Err() error                                   { return nil }
+func (m *mockSyncRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
+func (m *mockSyncRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
+func (m *mockSyncRows) Next() bool {
+	if m.idx < len(m.items) {
+		m.idx++
+		return true
+	}
+	return false
+}
+func (m *mockSyncRows) Scan(dest ...any) error {
+	if m.idx == 0 || m.idx > len(m.items) {
+		return errors.New("no row")
+	}
+	it := m.items[m.idx-1]
+	if len(dest) >= 6 {
+		*dest[0].(*string) = it.LineID
+		*dest[1].(*string) = it.StationID
+		*dest[2].(*int) = it.Direction
+		*dest[3].(*time.Time) = it.TappedAt
+		*dest[4].(*bool) = it.IsTransfer
+		*dest[5].(*int) = it.TransferLevel
+	}
+	return nil
+}
+func (m *mockSyncRows) Values() ([]any, error) { return nil, nil }
+func (m *mockSyncRows) RawValues() [][]byte    { return nil }
+func (m *mockSyncRows) Conn() *pgx.Conn        { return nil }
+
+type mockSyncPool struct {
+	queryRowFunc func(sql string, args ...any) pgx.Row
+	queryFunc    func(sql string, args ...any) (pgx.Rows, error)
+	execFunc     func(sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+func (m *mockSyncPool) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+	if m.execFunc != nil {
+		return m.execFunc(sql, arguments...)
+	}
+	return pgconn.NewCommandTag("INSERT 1"), nil
+}
+
+func (m *mockSyncPool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if m.queryFunc != nil {
+		return m.queryFunc(sql, args...)
+	}
+	return &mockSyncRows{}, nil
+}
+
+func (m *mockSyncPool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if m.queryRowFunc != nil {
+		return m.queryRowFunc(sql, args...)
+	}
+	return &mockSyncRow{}
+}
+
+func TestSyncService_PersistentPipeline(t *testing.T) {
+	ctx := context.Background()
+	pEngine := pricing.NewPricingEngine()
+	led := ledger.NewMemoryLedger()
+	syncSvc := NewSyncService(pEngine, led, 5000)
+
+	pool := &mockSyncPool{}
+	syncSvc.SetDBPool(pool)
+
+	// Case 1: Idempotent event found
+	pool.queryRowFunc = func(sql string, args ...any) pgx.Row {
+		if strings.Contains(sql, "FROM jw_validator_events") {
+			return &mockSyncRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*uuid.UUID) = uuid.New()
+					*dest[1].(*string) = "IDEM_1"
+					*dest[2].(*string) = "VAL_1"
+					*dest[3].(*int64) = 1
+					*dest[4].(*string) = "CARD_1"
+					*dest[5].(*string) = "LINE_1"
+					*dest[6].(*string) = "STAT_1"
+					*dest[7].(*int) = 1
+					*dest[8].(*time.Time) = time.Now()
+					*dest[9].(*time.Time) = time.Now()
+					*dest[10].(*domain.Kurus) = 2000
+					*dest[11].(*bool) = false
+					*dest[12].(*int) = 0
+					*dest[13].(*domain.ValidatorEventStatus) = domain.EventStatusProcessed
+					str := "Rejection reason"
+					*dest[14].(**string) = &str
+					return nil
+				},
+			}
+		}
+		return &mockSyncRow{scanFunc: func(dest ...any) error { return errors.New("not found") }}
+	}
+
+	ev, err := syncSvc.IngestOfflineEvent(ctx, IngestEventRequest{
+		IdempotencyKey: "IDEM_1",
+		ValidatorID:    "VAL_1",
+		SequenceNo:     1,
+		CardID:         "CARD_1",
+	})
+	if err != nil || ev.IdempotencyKey != "IDEM_1" {
+		t.Fatalf("Idempotent event başarısız: %v", err)
+	}
+
+	// Case 2: Card Not Found in DB
+	pool.queryRowFunc = func(sql string, args ...any) pgx.Row {
+		return &mockSyncRow{
+			scanFunc: func(dest ...any) error {
+				return errors.New("kart bulunamadı")
+			},
+		}
+	}
+	_, err = syncSvc.IngestOfflineEvent(ctx, IngestEventRequest{
+		IdempotencyKey: "IDEM_NEW",
+		CardID:         "CARD_NOT_EXIST",
+	})
+	if err == nil {
+		t.Fatal("Olmayan kartta hata bekleniyordu")
+	}
+
+	// Case 3: Card Blacklisted
+	pool.queryRowFunc = func(sql string, args ...any) pgx.Row {
+		if strings.Contains(sql, "FROM jw_validator_events") {
+			return &mockSyncRow{scanFunc: func(dest ...any) error { return errors.New("no event") }}
+		}
+		if strings.Contains(sql, "FROM jw_cards") {
+			return &mockSyncRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*string) = "CARD_BLK"
+					*dest[1].(*domain.CardType) = domain.CardTypeTam
+					*dest[2].(*domain.Kurus) = 1000
+					*dest[3].(*bool) = true // IsBlacklisted
+					*dest[4].(*int) = 0
+					*dest[5].(*domain.Kurus) = 0
+					return nil
+				},
+			}
+		}
+		return &mockSyncRow{}
+	}
+	ev, err = syncSvc.IngestOfflineEvent(ctx, IngestEventRequest{
+		IdempotencyKey: "IDEM_BLK",
+		CardID:         "CARD_BLK",
+	})
+	if err != nil || ev.Status != domain.EventStatusRejected {
+		t.Fatalf("Kara listedeki kart reddedilmeli, alınan: %v, status: %v", err, ev)
+	}
+
+	// Case 4: Normal Tap with Tariff Lookup and Trip History
+	led.RegisterCard(domain.Card{ID: "CARD_OK", BalanceKurus: 10000, CardType: domain.CardTypeTam})
+	pool.queryRowFunc = func(sql string, args ...any) pgx.Row {
+		if strings.Contains(sql, "FROM jw_validator_events") {
+			return &mockSyncRow{scanFunc: func(dest ...any) error { return errors.New("no event") }}
+		}
+		if strings.Contains(sql, "FROM jw_cards") {
+			return &mockSyncRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*string) = "CARD_OK"
+					*dest[1].(*domain.CardType) = domain.CardTypeTam
+					*dest[2].(*domain.Kurus) = 10000
+					*dest[3].(*bool) = false
+					*dest[4].(*int) = 0
+					*dest[5].(*domain.Kurus) = 0
+					return nil
+				},
+			}
+		}
+		if strings.Contains(sql, "FROM jw_tariffs") {
+			return &mockSyncRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*string) = "TAR_1"
+					*dest[1].(*string) = "Tarife"
+					*dest[2].(*domain.LineMode) = domain.ModeBus
+					*dest[3].(*domain.Kurus) = 2000
+					*dest[4].(*domain.Kurus) = 1000
+					*dest[5].(*domain.Kurus) = 0
+					*dest[6].(*int) = 50
+					*dest[7].(*int) = 75
+					*dest[8].(*int) = 50
+					*dest[9].(*int) = 10
+					*dest[10].(*domain.Kurus) = 150000
+					*dest[11].(*bool) = true
+					return nil
+				},
+			}
+		}
+		return &mockSyncRow{}
+	}
+	pool.queryFunc = func(sql string, args ...any) (pgx.Rows, error) {
+		return &mockSyncRows{
+			items: []pricing.TripHistoryItem{
+				{
+					LineID:        "LINE_OTHER",
+					StationID:     "STAT_0",
+					Direction:     1,
+					TappedAt:      time.Now().Add(-10 * time.Minute),
+					IsTransfer:    false,
+					TransferLevel: 0,
+				},
+			},
+		}, nil
+	}
+
+	ev, err = syncSvc.IngestOfflineEvent(ctx, IngestEventRequest{
+		IdempotencyKey: "IDEM_OK",
+		ValidatorID:    "VAL_1",
+		SequenceNo:     2,
+		CardID:         "CARD_OK",
+		LineID:         "LINE_NEW",
+		StationID:      "STAT_1",
+		Direction:      1,
+		TappedAt:       time.Now(),
+	})
+	if err != nil || ev.Status != domain.EventStatusProcessed {
+		t.Fatalf("Normal biniş PROCESSED olmalı: %v", err)
+	}
+
+	// Case 5: Negative tolerance tap (balance drops below 0 but above -negativeLimit)
+	led.RegisterCard(domain.Card{ID: "CARD_NEG", BalanceKurus: 500, CardType: domain.CardTypeTam})
+	pool.queryRowFunc = func(sql string, args ...any) pgx.Row {
+		if strings.Contains(sql, "FROM jw_validator_events") {
+			return &mockSyncRow{scanFunc: func(dest ...any) error { return errors.New("no event") }}
+		}
+		if strings.Contains(sql, "FROM jw_cards") {
+			return &mockSyncRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*string) = "CARD_NEG"
+					*dest[1].(*domain.CardType) = domain.CardTypeTam
+					*dest[2].(*domain.Kurus) = 500
+					*dest[3].(*bool) = false
+					*dest[4].(*int) = 0
+					*dest[5].(*domain.Kurus) = 0
+					return nil
+				},
+			}
+		}
+		return &mockSyncRow{}
+	}
+	ev, err = syncSvc.IngestOfflineEvent(ctx, IngestEventRequest{
+		IdempotencyKey: "IDEM_NEG",
+		ValidatorID:    "VAL_1",
+		SequenceNo:     3,
+		CardID:         "CARD_NEG",
+		LineID:         "LINE_1",
+		StationID:      "STAT_1",
+		Direction:      1,
+		TappedAt:       time.Now(),
+		Tariff:         domain.Tariff{BaseFareKurus: 2000},
+	})
+	if err != nil || ev.Status != domain.EventStatusNegativeTolerance {
+		t.Fatalf("Negatif tolerans durumu bekleniyordu, alınan: %v", ev)
+	}
+
+	// Case 6: Insufficient balance beyond negative limit -> blacklisted
+	led.RegisterCard(domain.Card{ID: "CARD_FAIL", BalanceKurus: -5000, CardType: domain.CardTypeTam})
+	pool.queryRowFunc = func(sql string, args ...any) pgx.Row {
+		if strings.Contains(sql, "FROM jw_validator_events") {
+			return &mockSyncRow{scanFunc: func(dest ...any) error { return errors.New("no event") }}
+		}
+		if strings.Contains(sql, "FROM jw_cards") {
+			return &mockSyncRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*string) = "CARD_FAIL"
+					*dest[1].(*domain.CardType) = domain.CardTypeTam
+					*dest[2].(*domain.Kurus) = -5000
+					*dest[3].(*bool) = false
+					*dest[4].(*int) = 0
+					*dest[5].(*domain.Kurus) = 0
+					return nil
+				},
+			}
+		}
+		return &mockSyncRow{}
+	}
+	ev, err = syncSvc.IngestOfflineEvent(ctx, IngestEventRequest{
+		IdempotencyKey: "IDEM_FAIL",
+		ValidatorID:    "VAL_1",
+		SequenceNo:     4,
+		CardID:         "CARD_FAIL",
+		LineID:         "LINE_1",
+		StationID:      "STAT_1",
+		Direction:      1,
+		TappedAt:       time.Now(),
+		Tariff:         domain.Tariff{BaseFareKurus: 2000},
+	})
+	if err != nil || ev.Status != domain.EventStatusRejected {
+		t.Fatalf("Limit aşımında REJECTED bekleniyordu: %v", err)
+	}
+
+	// Case 7: IngestBatch with persistence
+	batchRes, err := syncSvc.IngestBatch(ctx, []IngestEventRequest{
+		{
+			IdempotencyKey: "IDEM_BATCH_1",
+			ValidatorID:    "VAL_1",
+			SequenceNo:     10,
+			CardID:         "CARD_OK",
+			TappedAt:       time.Now(),
+		},
+	})
+	if err != nil || len(batchRes) != 1 {
+		t.Fatalf("IngestBatch başarısız: %v", err)
 	}
 }

@@ -331,6 +331,12 @@ func SeedDatabaseWithExecutor(ctx context.Context, pool DBExecutor, authSvc *aut
 			if err != nil {
 				slog.Warn("Başlangıç ledger seed uyarısı", "card_id", c.ID, "error", err)
 			}
+			// Kartın bakiyesini defter toplamına eşitle (kart_bakiyesi == SUM(jw_ledger.amount) değişmezi)
+			_, _ = pool.Exec(ctx, `
+				UPDATE jw_cards 
+				SET balance_kurus = (SELECT COALESCE(SUM(amount_kurus), 0) FROM jw_ledger WHERE card_id = $1)
+				WHERE id = $1
+			`, c.ID)
 		}
 	}
 

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5"
 	"github.com/mamyylmz/AktarBilet/internal/auth"
 	"github.com/mamyylmz/AktarBilet/internal/domain"
 )
@@ -105,9 +105,13 @@ func RequireAuth() func(http.Handler) http.Handler {
 	}
 }
 
+type QueryRower interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // RequireRole checks if the authenticated user possesses one of the allowed roles,
 // dynamically verifying against the database to revoke stale role claims.
-func RequireRole(pool *pgxpool.Pool, roles ...domain.UserRole) func(http.Handler) http.Handler {
+func RequireRole(pool QueryRower, roles ...domain.UserRole) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claimsVal := r.Context().Value(UserContextKey)
