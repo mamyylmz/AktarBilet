@@ -1,0 +1,11 @@
+.git
+.github
+**/.git
+node_modules
+**/node_modules
+web/dist
+qa/artifacts
+coverage.out
+bin
+tmp
+.env
