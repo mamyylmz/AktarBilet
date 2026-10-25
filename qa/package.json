@@ -1,0 +1,25 @@
+{
+  "name": "aktarbilet-independent-qa",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "env:up": "docker compose --project-name aktarbilet-qa --file docker-compose.qa.yml up --build --detach --wait",
+    "env:down": "docker compose --project-name aktarbilet-qa --file docker-compose.qa.yml down --remove-orphans",
+    "test:all": "node scripts/test-all.mjs",
+    "test:api": "playwright test tests/api.integration.spec.js api",
+    "test:rbac": "playwright test tests/rbac.security.spec.js",
+    "test:e2e": "playwright test tests/browser.uat.spec.js e2e",
+    "test:db": "playwright test tests/database.integrity.spec.js db",
+    "test:security": "playwright test tests/rbac.security.spec.js security",
+    "test:integration": "playwright test tests/api.integration.spec.js tests/database.integrity.spec.js api db",
+    "test:load": "node load/http-load.mjs",
+    "test:load:events": "node load/event-load.mjs",
+    "test:chaos": "node scripts/chaos-check.mjs",
+    "test:smoke": "playwright test --grep @smoke",
+    "test:report": "playwright show-report artifacts/html-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
+  }
+}

@@ -1,0 +1,79 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: aktarbilet_qa
+      POSTGRES_USER: aktarbilet_qa
+      POSTGRES_PASSWORD: qa-local-only
+    volumes:
+      - qa_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aktarbilet_qa -d aktarbilet_qa"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - qa-net
+
+  backend:
+    build:
+      context: ..
+      dockerfile: Dockerfile.backend
+    environment:
+      PORT: "8080"
+      DATABASE_URL: "postgres://aktarbilet_qa:qa-local-only@postgres:5432/aktarbilet_qa?sslmode=disable"
+      JWT_SECRET: "qa-only-jwt-secret-at-least-thirty-two-bytes"
+      DDO_STAMP: "f85f26"
+      ENVIRONMENT: "qa"
+    ports:
+      - "127.0.0.1:18080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - qa-net
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: qa/Dockerfile.frontend.qa
+    ports:
+      - "127.0.0.1:13000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      # The shipped image check uses localhost, which resolves to ::1 in Alpine
+      # while nginx listens on IPv4 only. Keep the production defect visible in
+      # the audit and use an explicit IPv4 target solely for QA orchestration.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - qa-net
+
+  simulator:
+    build:
+      context: ..
+      dockerfile: Dockerfile.simulator
+    environment:
+      BACKEND_URL: "http://backend:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    profiles: ["simulator"]
+    networks:
+      - qa-net
+
+volumes:
+  qa_postgres_data:
+
+networks:
+  qa-net:
+    driver: bridge

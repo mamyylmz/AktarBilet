@@ -25,3 +25,7 @@ web/dist/
 .DS_Store
 Thumbs.db
 *.log
+
+# QA test outputs and artifacts
+qa/artifacts/
+qa/node_modules/
