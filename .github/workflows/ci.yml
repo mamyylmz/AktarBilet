@@ -8,8 +8,25 @@ on:
 
 jobs:
   test-and-verify:
-    name: Backend Testleri ve Doğrulama
+    name: Backend Testleri, Kapsam ve Doğrulama
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: aktarbilet
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     steps:
       - name: Kodu Klonla
         uses: actions/checkout@v4
@@ -26,19 +43,39 @@ jobs:
       - name: Go Statik Analiz (Vet & Format)
         run: |
           go vet ./...
-          test -z "$(gofmt -l .)" || (echo "Formatlanmamış dosyalar mevcut" && exit 1)
+          test -z "$(gofmt -l .)" || (echo "Formatlanmamış dosyalar mevcut:" && gofmt -l . && exit 1)
 
-      - name: Kapsamlı Birim ve Entegrasyon Testleri
+      - name: Veritabanı Şeması ve Başlangıç Tohumunu Başlat (reset-demo)
+        env:
+          DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/aktarbilet?sslmode=disable"
+          JWT_SECRET: "ddo-aktarbilet-super-secret-key-2026"
+          DDO_STAMP: "f85f26"
+        run: |
+          go run ./cmd/server -reset
+
+      - name: Kapsamlı Birim ve Entegrasyon Testleri (Coverage Gate >= 70%)
+        env:
+          DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/aktarbilet?sslmode=disable"
+          JWT_SECRET: "ddo-aktarbilet-super-secret-key-2026"
+          DDO_STAMP: "f85f26"
         run: |
           go test -v -race -coverprofile=coverage.out ./internal/...
           go tool cover -func=coverage.out
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print substr($3, 1, length($3)-1)}')
+          echo "Toplam İfade Kapsamı: ${COVERAGE}%"
+          awk -v cov="$COVERAGE" 'BEGIN { if (cov < 70.0) { print "HATA: Test kapsamı %70 eşiğinin altında!"; exit 1 } else { print "BAŞARILI: Test kapsamı eşiği karşılandı." } }'
 
       - name: Hızlı Doğrulama Komutu (make verify)
+        env:
+          DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/aktarbilet?sslmode=disable"
+          JWT_SECRET: "ddo-aktarbilet-super-secret-key-2026"
+          DDO_STAMP: "f85f26"
         run: go run ./cmd/verify
 
   frontend-build:
     name: Frontend Derleme ve Tip Kontrolü
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Kodu Klonla
         uses: actions/checkout@v4
@@ -59,6 +96,7 @@ jobs:
   container-build:
     name: Docker Konteyner İmajları Derleme
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Kodu Klonla
         uses: actions/checkout@v4

@@ -1,5 +1,12 @@
 # AktarBilet — Şehir İçi Toplu Taşıma Bilet ve Ücretlendirme Sistemi
 
+[![AktarBilet CI / CD Pipeline](https://github.com/mamyylmz/AktarBilet/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mamyylmz/AktarBilet/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/Coverage-82.6%25-brightgreen.svg)](https://github.com/mamyylmz/AktarBilet)
+[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8.svg)](https://golang.org)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791.svg)](https://www.postgresql.org)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com)
+[![DDO Stamp](https://img.shields.io/badge/DDO--Stamp-f85f26-blue.svg)](https://github.com/mamyylmz/AktarBilet)
+
 > **Aday:** Muhammed Yılmaz  
 > **Başvuru:** DDO Yazılım Ekibi Alım Projesi  
 > **Tarih:** 24 Ekim 2026  
