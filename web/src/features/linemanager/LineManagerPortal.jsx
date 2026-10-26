@@ -51,11 +51,13 @@ export function LineManagerPortal({
     {
       header: 'Hat',
       key: 'line_name',
+      minWidth: '220px',
       render: (row) => <span className="font-semibold text-sm">{row.line_name || row.line_id}</span>,
     },
     {
       header: 'İşletmeci',
       key: 'operator',
+      minWidth: '110px',
       render: (row) => (
         <span className="badge badge-secondary uppercase">{row.operator}</span>
       ),
@@ -63,24 +65,28 @@ export function LineManagerPortal({
     {
       header: 'Toplam Biniş',
       key: 'total_boardings',
+      minWidth: '120px',
       align: 'right',
       render: (row) => <span className="font-mono">{Number(row.total_boardings || 0).toLocaleString('tr-TR')}</span>,
     },
     {
       header: 'Brüt Gelir',
       key: 'gross_revenue_kurus',
+      minWidth: '130px',
       align: 'right',
       render: (row) => <span className="font-mono text-primary font-semibold">{formatKurus(row.gross_revenue_kurus)}</span>,
     },
     {
       header: 'Toplam Maliyet',
       key: 'total_cost_kurus',
+      minWidth: '140px',
       align: 'right',
       render: (row) => <span className="font-mono text-muted">{formatKurus(row.total_cost_kurus)}</span>,
     },
     {
       header: 'Net Kâr / Marj',
       key: 'net_margin_kurus',
+      minWidth: '140px',
       align: 'right',
       render: (row) => {
         const isProfitable = (row.net_margin_kurus || 0) >= 0;

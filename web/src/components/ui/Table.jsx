@@ -15,13 +15,17 @@ export function Table({
       aria-label={ariaLabel}
       className={`table-scroll-container focus-visible:outline-2 ${className}`}
     >
-      <table className="data-table">
+      <table className="data-table table-accessible">
         <thead>
           <tr>
             {columns.map((col, idx) => (
               <th
                 key={col.key || idx}
-                style={{ textAlign: col.align || 'left', width: col.width || 'auto' }}
+                style={{
+                  textAlign: col.align || 'left',
+                  width: col.width || 'auto',
+                  minWidth: col.minWidth || undefined,
+                }}
                 scope="col"
               >
                 {col.header}
@@ -32,7 +36,7 @@ export function Table({
         <tbody>
           {data.length === 0 ? (
             <tr>
-              <td colSpan={columns.length} className="table-empty-cell">
+              <td colSpan={columns.length} className="table-empty-cell empty-state-cell">
                 {emptyMessage}
               </td>
             </tr>
@@ -42,7 +46,10 @@ export function Table({
                 {columns.map((col, colIdx) => (
                   <td
                     key={col.key || colIdx}
-                    style={{ textAlign: col.align || 'left' }}
+                    style={{
+                      textAlign: col.align || 'left',
+                      minWidth: col.minWidth || undefined,
+                    }}
                   >
                     {col.render ? col.render(row, rowIdx) : row[col.key]}
                   </td>
