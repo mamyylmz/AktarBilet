@@ -30,7 +30,11 @@ test.describe('RBAC, ownership and token security', () => {
 
   test('tampered and expired JWTs are rejected', async ({ request }) => {
     const { token } = await login(request, 'operasyon');
-    const tampered = `${token.slice(0, -1)}${token.endsWith('a') ? 'b' : 'a'}`;
+    const tokenParts = token.split('.');
+    const signature = Buffer.from(tokenParts[2], 'base64url');
+    signature[0] ^= 0xff;
+    tokenParts[2] = signature.toString('base64url');
+    const tampered = tokenParts.join('.');
     const tamperedResponse = await request.get(`${apiURL}/api/v1/anomalies`, { headers: bearer(tampered) });
     expect(tamperedResponse.status()).toBe(401);
 

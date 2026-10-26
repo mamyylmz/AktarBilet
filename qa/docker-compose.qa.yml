@@ -1,4 +1,29 @@
 services:
+  credential-init:
+    image: alpine:3.20
+    restart: "no"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        umask 077
+        target=/secrets/validator-credentials.json
+        token() { od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; }
+        if [ ! -s "$$target" ]; then
+          printf '{"VAL_500T_01":"%s","VAL_14ES_01":"%s","VAL_T1_01":"%s","VAL_VAPUR_01":"%s"}\n' "$$(token)" "$$(token)" "$$(token)" "$$(token)" > "$$target"
+          chmod 0444 "$$target"
+        fi
+        test -s "$$target"
+    volumes:
+      - qa_validator_credentials:/secrets
+
+  simulator-storage-init:
+    image: alpine:3.20
+    restart: "no"
+    command: ["/bin/sh", "-ec", "chown -R 10001:10001 /data && chmod 0700 /data"]
+    volumes:
+      - qa_simulator_data:/data
+
   postgres:
     image: postgres:16-alpine
     environment:
@@ -25,9 +50,14 @@ services:
       JWT_SECRET: "qa-only-jwt-secret-at-least-thirty-two-bytes"
       DDO_STAMP: "f85f26"
       ENVIRONMENT: "qa"
+      VALIDATOR_CREDENTIALS_FILE: /run/aktarbilet-secrets/validator-credentials.json
+    volumes:
+      - qa_validator_credentials:/run/aktarbilet-secrets:ro
     ports:
       - "127.0.0.1:18080:8080"
     depends_on:
+      credential-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     healthcheck:
@@ -64,7 +94,18 @@ services:
       dockerfile: Dockerfile.simulator
     environment:
       BACKEND_URL: "http://backend:8080"
+      VALIDATOR_CREDENTIALS_FILE: /run/aktarbilet-secrets/validator-credentials.json
+      SIMULATOR_WAL_PATH: "/var/lib/aktarbilet-simulator/simulator_wal.jsonl"
+      SIMULATOR_SEQ_PATH: "/var/lib/aktarbilet-simulator/simulator_seq.json"
+      SIMULATOR_MANIFEST_PATH: "/var/lib/aktarbilet-simulator/simulator_manifest.json"
+    volumes:
+      - qa_simulator_data:/var/lib/aktarbilet-simulator
+      - qa_validator_credentials:/run/aktarbilet-secrets:ro
     depends_on:
+      credential-init:
+        condition: service_completed_successfully
+      simulator-storage-init:
+        condition: service_completed_successfully
       backend:
         condition: service_healthy
     profiles: ["simulator"]
@@ -73,6 +114,8 @@ services:
 
 volumes:
   qa_postgres_data:
+  qa_simulator_data:
+  qa_validator_credentials:
 
 networks:
   qa-net:

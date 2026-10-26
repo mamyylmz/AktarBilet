@@ -18,6 +18,7 @@ var (
 	ErrCardBlacklisted     = errors.New("kart kara listede")
 	ErrInvalidAmount       = errors.New("geçersiz tutar")
 	ErrCardNotFound        = errors.New("kart bulunamadı")
+	ErrIdempotencyConflict = errors.New("idempotency anahtarı çakışması: farklı parametrelerle daha önce kullanılmış")
 )
 
 type LedgerService interface {
@@ -140,6 +141,9 @@ func (m *MemoryLedger) Recharge(
 	if refID != "" {
 		for _, e := range m.entries[cardID] {
 			if e.ReferenceID == refID {
+				if e.AmountKurus != amount || e.CardID != cardID {
+					return nil, ErrIdempotencyConflict
+				}
 				entryCopy := e
 				return &entryCopy, nil
 			}
@@ -315,6 +319,9 @@ func (p *PostgresLedger) ProcessTap(
 			WHERE reference_id = $1
 		`, refID).Scan(&existing.ID, &existing.CardID, &existing.EntryType, &existing.AmountKurus, &existing.BalanceAfterKurus, &existingRef, &existingDesc, &existing.CreatedAt)
 		if err == nil {
+			if existing.AmountKurus != -fare || existing.CardID != cardID {
+				return nil, ErrIdempotencyConflict
+			}
 			if existingRef != nil {
 				existing.ReferenceID = *existingRef
 			}
@@ -407,6 +414,9 @@ func (p *PostgresLedger) Recharge(
 			WHERE reference_id = $1
 		`, refID).Scan(&existing.ID, &existing.CardID, &existing.EntryType, &existing.AmountKurus, &existing.BalanceAfterKurus, &existingRef, &existingDesc, &existing.CreatedAt)
 		if err == nil {
+			if existing.AmountKurus != amount || existing.CardID != cardID {
+				return nil, ErrIdempotencyConflict
+			}
 			if existingRef != nil {
 				existing.ReferenceID = *existingRef
 			}

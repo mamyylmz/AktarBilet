@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { apiURL, accounts, bearer, login } from '../helpers/http.js';
-import { scalar } from '../helpers/db.js';
+import { apiURL, accounts, bearer, login, deviceAuthHeaders } from '../helpers/http.js';
+import { scalar, sql } from '../helpers/db.js';
 
 test.describe('real API and PostgreSQL integration', () => {
   test('@smoke health proves PostgreSQL readiness and canary headers', async ({ request }) => {
@@ -64,38 +64,45 @@ test.describe('real API and PostgreSQL integration', () => {
   });
 
   test('recharge idempotency returns one effect for the same key', async ({ request }) => {
-    const { token } = await login(request, 'yolcu');
-    const key = 'QA-RECHARGE-IDEMPOTENCY-001';
-    const before = Number(scalar("SELECT balance_kurus FROM jw_cards WHERE id='CARD_TAM_001'"));
-    const first = await request.post(`${apiURL}/api/v1/cards/CARD_TAM_001/recharge`, {
-      headers: { ...bearer(token), 'Idempotency-Key': key },
-      data: { amount_kurus: 5000, description: 'QA idempotency' }
-    });
-    const second = await request.post(`${apiURL}/api/v1/cards/CARD_TAM_001/recharge`, {
-      headers: { ...bearer(token), 'Idempotency-Key': key },
-      data: { amount_kurus: 5000, description: 'QA idempotency' }
-    });
-    expect(first.status()).toBe(200);
-    expect(second.status()).toBe(200);
-    expect(await second.json()).toEqual(await first.json());
-    expect(Number(scalar("SELECT balance_kurus FROM jw_cards WHERE id='CARD_TAM_001'"))).toBe(before + 5000);
-    expect(scalar(`SELECT COUNT(*) FROM jw_ledger WHERE reference_id='${key}'`)).toBe('1');
+    const { token, body } = await login(request, 'yolcu');
+    sql(`UPDATE jw_cards SET user_id='${body.user.id}' WHERE id='CARD_TAM_001'`);
+    try {
+      const key = 'QA-RECHARGE-IDEMPOTENCY-001';
+      const before = Number(scalar("SELECT balance_kurus FROM jw_cards WHERE id='CARD_TAM_001'"));
+      const first = await request.post(`${apiURL}/api/v1/cards/CARD_TAM_001/recharge`, {
+        headers: { ...bearer(token), 'Idempotency-Key': key },
+        data: { amount_kurus: 5000, description: 'QA idempotency' }
+      });
+      const second = await request.post(`${apiURL}/api/v1/cards/CARD_TAM_001/recharge`, {
+        headers: { ...bearer(token), 'Idempotency-Key': key },
+        data: { amount_kurus: 5000, description: 'QA idempotency' }
+      });
+      expect(first.status()).toBe(200);
+      expect(second.status()).toBe(200);
+      expect(await second.json()).toEqual(await first.json());
+      expect(Number(scalar("SELECT balance_kurus FROM jw_cards WHERE id='CARD_TAM_001'"))).toBe(before + 5000);
+      expect(scalar(`SELECT COUNT(*) FROM jw_ledger WHERE reference_id='${key}'`)).toBe('1');
+    } finally {
+      sql(`UPDATE jw_cards SET user_id=NULL WHERE id='CARD_TAM_001'`);
+    }
   });
 
   test('real validator tap persists one event and one matching ledger debit', async ({ request }) => {
-    const key = 'QA-TAP-REAL-001';
+    const key = `QA-TAP-REAL-${Date.now()}`;
+    const nextSeq = Math.max(900001, Number(scalar("SELECT COALESCE(MAX(last_sequence_no), 0) FROM jw_validator_credentials WHERE validator_id='VAL_500T_01'") || 0) + 1);
+    const tapData = {
+      validator_id: 'VAL_500T_01', sequence_no: nextSeq, card_id: 'CARD_TAM_001',
+      line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
+      tapped_at: '2026-10-24T14:00:00Z'
+    };
     const response = await request.post(`${apiURL}/api/v1/validators/tap`, {
-      headers: { 'Idempotency-Key': key },
-      data: {
-        validator_id: 'VAL_500T_01', sequence_no: 900001, card_id: 'CARD_TAM_001',
-        line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
-        tapped_at: '2026-10-24T14:00:00Z'
-      }
+      headers: { ...deviceAuthHeaders('VAL_500T_01', nextSeq, tapData, key), 'Idempotency-Key': key },
+      data: tapData
     });
     expect(response.status()).toBe(200);
     expect((await response.json()).event.status).toBe('PROCESSED');
     expect(scalar(`SELECT COUNT(*) FROM jw_validator_events WHERE idempotency_key='${key}'`)).toBe('1');
-    expect(scalar("SELECT COUNT(*) FROM jw_ledger WHERE reference_id='SYNC:VAL_500T_01:900001' AND amount_kurus < 0")).toBe('1');
+    expect(scalar(`SELECT COUNT(*) FROM jw_ledger WHERE reference_id='SYNC:VAL_500T_01:${nextSeq}' AND amount_kurus < 0`)).toBe('1');
   });
 
   test('invalid penalty reference cannot report success without a database row', async ({ request }) => {

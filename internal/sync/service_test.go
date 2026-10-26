@@ -76,6 +76,14 @@ func TestSyncService_Idempotency(t *testing.T) {
 	if bal != 8000 {
 		t.Fatalf("İdempotansi bozuldu! Bakiye 8000 kuruş olmalıydı, alınan: %d", bal)
 	}
+
+	// 3. Aynı anahtar, farklı kart/parametre -> ErrIdempotencyConflict dönmeli
+	conflictingReq := req
+	conflictingReq.CardID = "CARD_DIFFERENT"
+	_, err = syncSvc.IngestOfflineEvent(ctx, conflictingReq)
+	if !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("Beklenen ErrIdempotencyConflict hatası alınamadı, alınan: %v", err)
+	}
 }
 
 func TestSyncService_NegativeTolerancePolicy(t *testing.T) {

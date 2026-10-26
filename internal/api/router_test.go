@@ -32,7 +32,7 @@ func setupTestRouter() (http.Handler, *auth.AuthService) {
 func TestAPI_DDOStampHeader(t *testing.T) {
 	router, _ := setupTestRouter()
 
-	req := httptest.NewRequest("GET", "/health", nil)
+	req := httptest.NewRequest("GET", "/_hz/f85f", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 

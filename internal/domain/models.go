@@ -29,13 +29,14 @@ const (
 )
 
 type User struct {
-	ID           uuid.UUID `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-"`
-	FullName     string    `json:"full_name"`
-	Role         UserRole  `json:"role"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           uuid.UUID  `json:"id"`
+	Email        string     `json:"email"`
+	PasswordHash string     `json:"-"`
+	FullName     string     `json:"full_name"`
+	Role         UserRole   `json:"role"`
+	Roles        []UserRole `json:"roles,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 type CardType string

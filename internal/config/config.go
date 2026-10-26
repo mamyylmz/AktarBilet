@@ -6,11 +6,12 @@ import (
 )
 
 type Config struct {
-	Port           string
-	DatabaseURL    string
-	JWTSecret      string
-	Environment    string
-	DDOStampHeader string
+	Port                     string
+	DatabaseURL              string
+	JWTSecret                string
+	Environment              string
+	DDOStampHeader           string
+	ValidatorCredentialsFile string
 }
 
 func Load() *Config {
@@ -19,13 +20,15 @@ func Load() *Config {
 	jwtSecret := getEnv("JWT_SECRET", "super-secret-jwt-key-ddo-aktarbilet-2026")
 	env := getEnv("ENVIRONMENT", "development")
 	stamp := getEnv("DDO_STAMP", "f85f26")
+	credentialsFile := os.Getenv("VALIDATOR_CREDENTIALS_FILE")
 
 	return &Config{
-		Port:           port,
-		DatabaseURL:    dbURL,
-		JWTSecret:      jwtSecret,
-		Environment:    env,
-		DDOStampHeader: stamp,
+		Port:                     port,
+		DatabaseURL:              dbURL,
+		JWTSecret:                jwtSecret,
+		Environment:              env,
+		DDOStampHeader:           stamp,
+		ValidatorCredentialsFile: credentialsFile,
 	}
 }
 

@@ -8,6 +8,7 @@ RUN npm install
 
 COPY web/index.html ./
 COPY web/vite.config.js ./
+COPY web/public ./public
 COPY web/src ./src
 RUN npm run build
 
@@ -24,6 +25,12 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 RUN echo 'server { \
     listen 3000; \
     listen [::]:3000; \
+    location ~* \.pmtiles$ { \
+        root /usr/share/nginx/html; \
+        types { application/vnd.pmtiles pmtiles; } \
+        default_type application/vnd.pmtiles; \
+        add_header Accept-Ranges bytes; \
+    } \
     location / { \
         root /usr/share/nginx/html; \
         index index.html; \

@@ -1,77 +1,71 @@
-# Codex Release Gate
+# Codex Nihai Release Gate
 
-## Nihai karar
+**Karar:** **NOT_READY**
 
-**RELEASE DECISION: NOT_READY**  
-Denetim zamanı: 2026-10-25 04:56 TRT  
-Değerlendirilen kaynak: yerel `main@6ac85910e3cc8312b1759827b87342adc4d08b41` + uncommitted production değişiklikleri.
+**Git durumu:** **NOT_PUSHED** — zorunlu kapılarda FAIL/NOT_TESTED bulundu; yetki koşulu oluşmadı.
 
-Bu karar CI veya Docker erişimsizliği nedeniyle BLOCKED değildir. Kritik yollar gerçek API ve izole PostgreSQL ile çalıştırıldı ve yeniden üretilebilir ürün hataları bulundu.
+**Denetim zamanı:** 26 Ekim 2026, Europe/Istanbul
 
-## Zorunlu gate'ler
+**Branch:** `main`
 
-| Gate | Durum | Release etkisi |
+**Yerel HEAD:** `e74c89c957085638d11215d44dd06a9593ef4724`
+
+**Uzak `origin/main`:** `e74c89c957085638d11215d44dd06a9593ef4724` (bağımsız `git ls-remote`)
+**Son CI:** GitHub Actions run `40214469469`, base SHA `e74c89c...`, **success**. Kirli yerel aday için CI yok.
+
+## Zorunlu kapılar
+
+| Kapı | Durum | Bağımsız kanıt / gerekçe |
 |---|---|---|
-| Offline-negative `make verify` non-zero | **FAIL P0** | Tek komut kabul kanıtı güvenilmez |
-| F-1..F-7/T-1..T-5 gerçek HTTP+DB doğrulama | **FAIL P0** | 12 madde in-memory |
-| PostgreSQL zorunlu readiness | **FAIL P0** | DB yokken sahte healthy/in-memory |
-| Finansal işlem atomikliği | **FAIL P0** | Event hatasında debit kalıyor |
-| Validator device authentication | **FAIL P0** | Prefix/normal JWT ile mutation |
-| Card ownership / IDOR | **FAIL P0** | Yolcu keyfi sahipsiz karta dolum |
-| Arrival-order determinism | **FAIL P1** | Aynı olay seti farklı bakiye |
-| Settlement close/storno idempotency | **FAIL P1** | Duplicate finansal kayıt/değişen close |
-| T5 durable anomaly | **FAIL P1** | API true, DB 0 |
-| RBAC least privilege | **FAIL P1** | 28 kontrolde 10 FAIL |
-| Browser critical workflows | **FAIL P1** | Auth/role/storno/success durumu server-authoritative değil |
-| Audit trail ve DB constraints | **FAIL P1** | Audit 0, invalid direction kabul |
-| Ana Compose tek komut çalışma | **FAIL P1** | Current worktree frontend build olmuyor |
-| Go unit/live tests | PASS | 58/58 yalnız live DB ile |
-| Go race live DB | **FAIL** | Seed timeout; “zero races” kanıtlanmadı |
-| Coverage ≥70 core | PASS | Toplam 82.6% |
-| Seven canary | 6 PASS, 1 runtime BLOCKED | Container adı static doğru; main runtime build yüzünden yok |
-| 1M valid event/hour sustained | **NOT_TESTED** | 20k kısa koşu 538.31 event/s; 1 saat yok |
-| CI aynı local SHA/worktree | **FAIL** | CI yalnız eski remote SHA'yı test etti |
+| Adayın kesin tespiti | PASS | Yerel branch/SHA, uzak SHA, tam diff ve untracked dosyalar incelendi. |
+| Secret/büyük dosya hijyeni | FAIL | `.env` ignored ve `.env.example` ile aynı; >20 MB dosya yok. Buna karşın frontend bundle’da dört demo parolası ve deployable default JWT/HMAC secret var. |
+| Go test sayısı ≥40 | PASS | 64 `Test*`; `go test -count=1 ./internal/...` PASS. |
+| Core coverage ≥70% | PASS | Toplam statement coverage %83,7; pricing %96,8, ledger %91,2, sync %88,0. `GetLineFinancials` yalnız %18,5. |
+| Race detector | PASS | Resmî Go 1.23 container’da `go test -race -count=1 ./internal/...`; çalıştırılan yollarda race yok. |
+| Go vet | PASS | `go vet ./...`. |
+| Format/lint | FAIL | `gofmt -l cmd internal`: dört yeni dosya listelendi (`device_auth*`, `transit/eshot*`). Frontend’de lint script’i yok; **NOT_TESTED**. Mevcut CI dirty aday commit edilse format adımında kalır. |
+| Frontend build | PASS | `npm run build`; ana Compose backend/frontend/simülatör image build PASS. |
+| Gerçek API/PostgreSQL regression | FAIL | Playwright 102 toplam: 77 PASS, 25 FAIL, 0 skipped. |
+| Browser UAT / erişilebilirlik | FAIL | Üç kritik UI akışı FAIL; otomatik WCAG 2.2 AA/axe gate’i yok. Responsive ve altı rolün temel login kontrollerinin geçtiği alt küme yeterli değil. |
+| RBAC / IDOR | FAIL | Ceza ve fare-simulation veri/yetkileri fazla geniş; sahipsiz kart recharge IDOR; passenger JWT validator olarak kabul. |
+| Validatör güvenliği | FAIL | HMAC opsiyonel, batch’te yok; `VAL_` prefix yeterli; default secret ve process-local replay/revocation. |
+| Finansal atomiklik | FAIL | Ledger önce commit, event sonra insert; başarısız sahte validatör isteği kısmi finansal mutation üretiyor. |
+| Sırasız determinism | FAIL | Aynı olay kümesi: beklenen 7.000, gerçek 6.000 kuruş. |
+| Settlement / storno | FAIL | Tekrarlı close timestamp değiştiriyor; storno retry çift kayıt; audit yok. |
+| Anomali kalıcılığı | FAIL | Rastgele, var olmayan event FK’si; insert hatası yutuluyor. |
+| `make verify` offline | PASS | Kapalı backend: exit 1, fail-fast. |
+| `make verify` live semantiği | FAIL | 14/14 ve exit 0 üretse de T-1/T-4/T-5 memory-only; birçok F/T yalnız HTTP 200; gerçek persistence/invariant kanıtı yok ve Playwright P0’larla çelişiyor. |
+| Fresh migration + seed | PASS | PostgreSQL 16; 6 kullanıcı, 200.025 kart, 40 hat, 4 validatör; ilk kullanıcı canary doğru. |
+| Safe `reset-demo` | PASS | İzole QA DB reset edildi; event 0, ledger 4, bakiye-ledger mismatch 0. |
+| Restart/recovery | PASS | PostgreSQL stop: health 503/DOWN; start: 200/UP; 180.000 load event’i korundu. |
+| Simulator Section 8 | FAIL | Runtime 50 generated, 0 batch sent, 5 failed, DB değişmedi; kalıcı queue/restart survival/manifest yok. |
+| ESHOT veri entegrasyonu | FAIL | Canlı 800/470/35 format/koordinat/dedupe ve stale cache olumlu; 429 retry/backoff yok, unsupported line kısıtı yok, ilk upstream hatası boş stale 200 olarak gizleniyor. |
+| MapLibre + PMTiles + Range | FAIL | Map SVG dekorasyonudur; MapLibre/PMTiles bağımlılığı, İzmir tile, Range, GTFS hizalama yok. |
+| Self-hosted style/font/sprite | FAIL | Google Fonts dış çağrıları gözlendi. OSM attribution yok; gerçek OSM haritası da yok. |
+| Cost analytics | FAIL | Ölçülmemiş maliyetler ve boş veride sahte kârlar; measured/assumed ayrımı yok; float; kısıtsız model; UI/API kontratı uyuşmuyor. |
+| 10 dk ≥278 persisted event/sn | KISMİ PASS | 180.000 benzersiz event, 300 event/sn, kayıp 0, duplicate ledger 0; ancak tamamı `NEGATIVE_TOLERANCE` ve güvenliksiz batch auth kullandı. Release capacity PASS sayılmadı. |
+| 1.000.000 event | NOT_TESTED | Bağımsız koşu yapılmadı; kanıt açığı açıkça korunuyor. |
+| PostgreSQL invariant | FAIL | Yük öncesi/sonrası test fixture’larıyla 3 `balance != SUM(ledger)` kartı oluşabildi; reset farkı temizledi fakat DB değişmezi zorlamıyor. |
+| Yedi sistem canary | PASS | `jw_` tablolar, `jw_tf_users`, stamp, `/_hz/f85f`, seed e-posta, container adı, README son satır doğrulandı. |
+| Dokümantasyon | FAIL | `TESTING.md`, `requests.http`, 5 ADR ve README soruları var; zorunlu OpenAPI dosyası yok ve README/AGY raporları gerçek FAIL’lerle çelişen PASS iddiaları taşıyor. |
+| Lisans / maliyet | FAIL | ESHOT CC BY 4.0 ve atıf doğrulandı, ücretli tile API yok. Tam transitif lisans/SBOM kanıtı yok; harita/OSM attribution gereksinimi karşılanmıyor. |
+| Local aday CI | NOT_TESTED | CI yalnız commit edilmiş `e74c89c...` için yeşil; 12 üretim/untracked kaynak değişikliği içeren yerel aday CI’da çalışmadı. |
 
-## AGY'nin tamamlaması gereken sıra
+## Sistem canary sonucu
 
-1. **Verifier'ı düzelt:** erişilemeyen backend hard FAIL; 14 maddenin tamamını gerçek endpoint + DB assertion'a geçir; CI'da offline-negative ekle.
-2. **Finansal sınırı atomik yap:** validator doğrulama, event, ledger, kart/sayaç ve anomaly aynı transaction; her DB hatası rollback.
-3. **Validator auth kur:** kayıtlı/aktif cihaz credential'ı; normal kullanıcı JWT'sini ve yalnız `VAL_` önekini reddet; simulator ID'lerini seed ile eşle.
-4. **IDOR/test-tailoring'i kaldır:** `QA-IDOR-001`/`IDOR probe` koşullarını sil; her yolcu mutation'ında `card.user_id == user.id`.
-5. **Fail-closed startup/readiness:** production/QA DB yoksa backend başlamasın; `/health` 503.
-6. **Offline determinism:** kart olaylarını kronolojik replay/reprice et; farkı append-only iade/ek ücretle düzelt; iki arrival order aynı sonuç vermeli.
-7. **Settlement/idempotency:** conditional close; storno ve diğer mutation'larda scoped key + payload hash; conflicting reuse 409/422.
-8. **T5 persistence:** gerçek event FK ile anomaly'yi transaction içinde yaz; GET'i DB'den oku; insert hatasını yutma.
-9. **RBAC/token:** onaylı endpoint×role matrisi; refresh/access purpose; ceza/simülasyon kısıtları; F-3 management API.
-10. **UI'yi server-authoritative yap:** demo parolalarını bundle'dan çıkar; gerçek login/rol; tüm success durumlarını response+DB'ye bağla; storno gerçek API çağrısı.
-11. **Şema/audit/para:** event direction CHECK, aynı transaction audit kayıtları, doğru `iade` tipi, parasal float alanlarını kaldır.
-12. **Teslim zinciri:** `.dockerignore` + deterministic frontend install; ana Compose runtime smoke; OpenAPI; PostgreSQL'li CI ve coverage/race/security/browser gate.
-13. **Test izolasyonu:** live Go fixture'larını transaction/cleanup ile izole et; başlangıç bakiyesini ledger ile kur; race deadline'ını düzelt.
-14. **Yeniden kanıt:** P0/P1 regresyon paketi 0 FAIL, ana Compose PASS, live `make verify` gerçek DB, ardından 1 saat/1M valid event testi.
+1. Tüm migration tabloları `jw_`: PASS.
+2. Kullanıcı tablosu `jw_tf_users`: PASS.
+3. Her test edilen HTTP yanıtta `X-DDO-Stamp: f85f26`: PASS.
+4. `GET /_hz/f85f` 200: PASS.
+5. İlk seed kullanıcı `seed.sedir@ddo-case.invalid`: PASS.
+6. Compose backend container adı `ddo-pelikan-api`: PASS.
+7. README son satırı tam canary: PASS.
 
-## Yeniden denetim için minimum komut seti
+## Çalışma ağacı ve yayın kararı
 
-```sh
-# Offline verifier mutlaka non-zero olmalı
-BACKEND_URL=http://127.0.0.1:1 make verify
+AGY üretim değişiklikleri: `cmd/simulator/main.go`, `cmd/verify/main.go`, `internal/api/handlers.go`, `internal/api/handlers_test.go`, `internal/api/router.go`, `internal/sync/service.go`, `internal/sync/service_test.go`, `web/src/App.jsx`; untracked production: `internal/sync/device_auth.go`, `internal/sync/device_auth_test.go`, `internal/transit/eshot.go`, `internal/transit/eshot_test.go`. AGY raporları da untracked.
 
-# İzole PostgreSQL ile bütün Go yolları; skip kabul edilmez
-DATABASE_URL='<isolated-qa-url>' go test -count=1 ./internal/...
-DATABASE_URL='<isolated-qa-url>' go test -race -count=1 ./internal/...
-go vet ./...
+Codex yalnız `qa/load/sustained-ingest.mjs`, bu turda istenen QA raporları ve ignored `qa/artifacts/codex/*` kanıtlarını ekledi. Production code değiştirilmedi.
 
-# Gerçek stack ve bağımsız QA
-docker compose up --build --detach --wait
-cd qa && npm run test:all
-
-# Düzeltilmiş P0/P1 hedefleri
-npx playwright test api/go_live.api.spec.js db/go_live.db.spec.js \
-  db/final_financial.audit.spec.js db/final_anomaly.audit.spec.js \
-  security/go_live.security.spec.js security/final_rbac.audit.spec.js \
-  e2e/go_live.uat.spec.js
-```
-
-## Onay koşulu
-
-Release ancak tüm P0/P1 maddeleri kapatılıp gerçek PostgreSQL üzerinde yeniden PASS olduğunda, ana Compose current worktree'de ayağa kalktığında, live race suite non-zero olmadan tamamlandığında ve CI aynı commit SHA'yı aynı gate'lerle test ettiğinde **READY** olabilir. Önceki raporların PASS etiketleri bu koşulların yerine geçmez.
+**Sonuç:** En az bir P0, bir zorunlu F/T, validator security, simulator Section 8, self-hosted gerçek map, regression ve kapasite kanıtı kapısı başarısızdır. Commit/push yapılması talimat gereği yasaktır.
 

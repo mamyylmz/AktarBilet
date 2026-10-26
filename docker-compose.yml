@@ -1,4 +1,24 @@
 services:
+  infra-init:
+    image: alpine:3.20
+    restart: "no"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        umask 077
+        target=/secrets/validator-credentials.json
+        token() { od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; }
+        if [ ! -s "$$target" ]; then
+          printf '{"VAL_500T_01":"%s","VAL_14ES_01":"%s","VAL_T1_01":"%s","VAL_VAPUR_01":"%s"}\n' "$$(token)" "$$(token)" "$$(token)" "$$(token)" > "$$target"
+          chmod 0444 "$$target"
+        fi
+        test -s "$$target"
+        chown -R 10001:10001 /data && chmod 0700 /data
+    volumes:
+      - validator_credentials:/secrets
+      - simulator_data:/data
+
   postgres:
     image: postgres:16-alpine
     container_name: ddo-postgres
@@ -29,9 +49,14 @@ services:
       DATABASE_URL: "postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-aktarbilet}?sslmode=disable"
       JWT_SECRET: ${JWT_SECRET:-ddo-aktarbilet-super-secret-key-2026}
       DDO_STAMP: "f85f26"
+      VALIDATOR_CREDENTIALS_FILE: /run/aktarbilet-secrets/validator-credentials.json
+    volumes:
+      - validator_credentials:/run/aktarbilet-secrets:ro
     ports:
       - "8080:8080"
     depends_on:
+      infra-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     healthcheck:
@@ -71,7 +96,18 @@ services:
     restart: unless-stopped
     environment:
       BACKEND_URL: "http://backend:8080"
+      VALIDATOR_CREDENTIALS_FILE: /run/aktarbilet-secrets/validator-credentials.json
+      SIMULATOR_WAL_PATH: "/var/lib/aktarbilet-simulator/simulator_wal.jsonl"
+      SIMULATOR_SEQ_PATH: "/var/lib/aktarbilet-simulator/simulator_seq.json"
+      SIMULATOR_MANIFEST_PATH: "/var/lib/aktarbilet-simulator/simulator_manifest.json"
+    volumes:
+      - simulator_data:/var/lib/aktarbilet-simulator
+      - validator_credentials:/run/aktarbilet-secrets:ro
+    profiles:
+      - simulator
     depends_on:
+      infra-init:
+        condition: service_completed_successfully
       backend:
         condition: service_healthy
     networks:
@@ -82,9 +118,12 @@ services:
       context: .
       dockerfile: Dockerfile.backend
     container_name: ddo-verify
-    entrypoint: ["go", "run", "./cmd/verify"]
+    entrypoint: ["/app/verify"]
     environment:
       BACKEND_URL: "http://backend:8080"
+      VALIDATOR_CREDENTIALS_FILE: /run/aktarbilet-secrets/validator-credentials.json
+    volumes:
+      - validator_credentials:/run/aktarbilet-secrets:ro
     profiles:
       - verify
     depends_on:
@@ -95,6 +134,8 @@ services:
 
 volumes:
   postgres_data:
+  simulator_data:
+  validator_credentials:
 
 networks:
   aktarbilet-net:

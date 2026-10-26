@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/mamyylmz/AktarBilet/internal/pricing"
 	"github.com/mamyylmz/AktarBilet/internal/settlement"
 	"github.com/mamyylmz/AktarBilet/internal/sync"
+	"github.com/mamyylmz/AktarBilet/internal/transit"
 )
 
 type testRig struct {
@@ -252,7 +254,7 @@ func TestAPI_GetCardLedger(t *testing.T) {
 func TestAPI_ProcessTap_And_Batch(t *testing.T) {
 	rig := setupTestRig()
 
-	// 1. Tekil validatör tap işlemi
+	// 1. Admin JWT cihaz kimliğinin yerine geçemez.
 	tapBody, _ := json.Marshal(map[string]interface{}{
 		"validator_id": "VAL_500T_01",
 		"sequence_no":  1001,
@@ -263,10 +265,11 @@ func TestAPI_ProcessTap_And_Batch(t *testing.T) {
 		"tapped_at":    time.Now().Format(time.RFC3339),
 	})
 	reqTap := httptest.NewRequest("POST", "/api/v1/validators/tap", bytes.NewReader(tapBody))
+	reqTap.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
 	wTap := httptest.NewRecorder()
 	rig.router.ServeHTTP(wTap, reqTap)
-	if wTap.Code != http.StatusOK {
-		t.Fatalf("Validatör biniş 200 dönmeli, alınan: %d (%s)", wTap.Code, wTap.Body.String())
+	if wTap.Code != http.StatusUnauthorized {
+		t.Fatalf("Admin JWT ile validatör binişi 401 dönmeli, alınan: %d (%s)", wTap.Code, wTap.Body.String())
 	}
 
 	// 2. Anonim eksik istek -> 401 Unauthorized
@@ -277,7 +280,7 @@ func TestAPI_ProcessTap_And_Batch(t *testing.T) {
 		t.Fatalf("Cihaz kimliksiz anonim tap 401 dönmeli, alınan: %d", wAnon.Code)
 	}
 
-	// 3. Toplu Batch Sync
+	// 3. Admin JWT toplu cihaz kimliğinin yerine geçemez.
 	batchBody, _ := json.Marshal([]map[string]interface{}{
 		{
 			"validator_id": "VAL_500T_02",
@@ -290,10 +293,11 @@ func TestAPI_ProcessTap_And_Batch(t *testing.T) {
 		},
 	})
 	reqBatch := httptest.NewRequest("POST", "/api/v1/validators/batch-sync", bytes.NewReader(batchBody))
+	reqBatch.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
 	wBatch := httptest.NewRecorder()
 	rig.router.ServeHTTP(wBatch, reqBatch)
-	if wBatch.Code != http.StatusOK {
-		t.Fatalf("Batch sync 200 dönmeli, alınan: %d (%s)", wBatch.Code, wBatch.Body.String())
+	if wBatch.Code != http.StatusUnauthorized {
+		t.Fatalf("Admin JWT ile batch sync 401 dönmeli, alınan: %d (%s)", wBatch.Code, wBatch.Body.String())
 	}
 }
 
@@ -427,8 +431,8 @@ func TestAPI_ErrorHandlingBranches(t *testing.T) {
 	reqBadTap := httptest.NewRequest("POST", "/api/v1/validators/tap", bytes.NewReader([]byte("{bad-json")))
 	wBadTap := httptest.NewRecorder()
 	rig.router.ServeHTTP(wBadTap, reqBadTap)
-	if wBadTap.Code != http.StatusBadRequest {
-		t.Fatalf("Bozuk tap JSON 400 dönmeli, alınan: %d", wBadTap.Code)
+	if wBadTap.Code != http.StatusUnauthorized {
+		t.Fatalf("Kimliksiz bozuk tap JSON 401 dönmeli, alınan: %d", wBadTap.Code)
 	}
 
 	// 4. Batch Sync Bad JSON (Authenticated)
@@ -436,8 +440,8 @@ func TestAPI_ErrorHandlingBranches(t *testing.T) {
 	reqBadBatch.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
 	wBadBatch := httptest.NewRecorder()
 	rig.router.ServeHTTP(wBadBatch, reqBadBatch)
-	if wBadBatch.Code != http.StatusBadRequest {
-		t.Fatalf("Bozuk batch JSON 400 dönmeli, alınan: %d", wBadBatch.Code)
+	if wBadBatch.Code != http.StatusUnauthorized {
+		t.Fatalf("Cihaz imzası olmayan bozuk batch JSON 401 dönmeli, alınan: %d", wBadBatch.Code)
 	}
 
 	// 5. Settlement Close Bad JSON
@@ -504,12 +508,12 @@ func TestAPI_ComprehensiveBranches(t *testing.T) {
 		t.Fatalf("Bozuk JSON login 400 dönmeli, alınan: %d", w.Code)
 	}
 
-	// 2. HealthCheck when pool is nil
+	// 2. HealthCheck when pool is nil (ARCH-04)
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest("GET", "/health", nil)
 	rig.router.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("Health check 200 dönmeli, alınan: %d", w.Code)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("Health check when pool is nil 503 dönmeli, alınan: %d", w.Code)
 	}
 
 	// 3. Recharge amount <= 0
@@ -612,9 +616,10 @@ func TestAPI_ComprehensiveBranches(t *testing.T) {
 	}
 	body, _ = json.Marshal(batchEvents)
 	req = httptest.NewRequest("POST", "/api/v1/validators/batch-sync", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
 	rig.router.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("Donanım validatör batch sync 200 dönmeli, alınan: %d", w.Code)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("Admin JWT cihaz imzası yerine geçememeli; 401 beklenirken alınan: %d", w.Code)
 	}
 
 	// 10. RoleAuthorization failure: Yolcu trying to access muhasebe close
@@ -876,6 +881,25 @@ func TestAPI_DatabaseQueryMocks(t *testing.T) {
 	// 7. CloseSettlementPeriod with DB
 	currentRole = domain.RoleMuhasebe
 	pID := uuid.New()
+	pool.queryRowFunc = func(sql string, args ...any) pgx.Row {
+		if strings.Contains(sql, "FROM jw_tf_users") {
+			return &mockAPIRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*domain.UserRole) = currentRole
+					return nil
+				},
+			}
+		}
+		if strings.Contains(sql, "FROM jw_settlement_periods") {
+			return &mockAPIRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*bool) = false
+					return nil
+				},
+			}
+		}
+		return &mockAPIRow{}
+	}
 	pool.execFunc = func(sql string, args ...any) (pgconn.CommandTag, error) {
 		return pgconn.NewCommandTag("UPDATE 1"), nil
 	}
@@ -889,6 +913,25 @@ func TestAPI_DatabaseQueryMocks(t *testing.T) {
 	}
 
 	// 8. StornoSettlement with DB
+	pool.queryRowFunc = func(sql string, args ...any) pgx.Row {
+		if strings.Contains(sql, "FROM jw_tf_users") {
+			return &mockAPIRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*domain.UserRole) = currentRole
+					return nil
+				},
+			}
+		}
+		if strings.Contains(sql, "FROM jw_settlement_periods") {
+			return &mockAPIRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*bool) = true
+					return nil
+				},
+			}
+		}
+		return &mockAPIRow{}
+	}
 	body, _ = json.Marshal(map[string]interface{}{
 		"period_id":    pID.String(),
 		"operator":     "belediye",
@@ -901,5 +944,238 @@ func TestAPI_DatabaseQueryMocks(t *testing.T) {
 	router.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("StornoSettlement with DB 200 dönmeli, alınan: %d", w.Code)
+	}
+}
+
+func TestAPI_TransitAndReportingEndpoints(t *testing.T) {
+	rig := setupTestRig()
+	adminToken := rig.token(rig.adminUser)
+	yolcuToken := rig.token(rig.yolcuUser)
+
+	// 1. GET /api/v1/transit/lines (Public)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/transit/lines", nil)
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /transit/lines 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 2. GET /api/v1/transit/live-buses (Public)
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/transit/live-buses?line=800", nil)
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /transit/live-buses 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 3. GET /api/v1/reports/line-financials (Unauthorized / Forbidden / Allowed)
+	// 3a. Unauthenticated -> 401
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/reports/line-financials", nil)
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("Unauthenticated GET line-financials 401 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 3b. Yolcu role -> 403 Forbidden
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/reports/line-financials", nil)
+	req.Header.Set("Authorization", "Bearer "+yolcuToken)
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("Yolcu role GET line-financials 403 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 3c. Admin role -> 200 OK
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/reports/line-financials", nil)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Admin role GET line-financials 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 4. POST /api/v1/optimization/headway-scenario
+	// 4a. Yolcu role -> 403 Forbidden
+	scenarioBody, _ := json.Marshal(map[string]interface{}{
+		"line_id":             "800",
+		"target_headway_mins": 10,
+		"peak_hour":           true,
+	})
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/optimization/headway-scenario", bytes.NewReader(scenarioBody))
+	req.Header.Set("Authorization", "Bearer "+yolcuToken)
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("Yolcu role POST headway-scenario 403 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 4b. Admin role -> 200 OK
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/optimization/headway-scenario", bytes.NewReader(scenarioBody))
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Admin role POST headway-scenario 200 dönmeli, alınan: %d", w.Code)
+	}
+}
+
+func TestAPI_DeviceAuthSignatureVerification(t *testing.T) {
+	authSvc := auth.NewAuthService("test-secret-12345678901234567890")
+	pricingEngine := pricing.NewPricingEngine()
+	ledSvc := ledger.NewMemoryLedger()
+	syncSvc := sync.NewSyncService(pricingEngine, ledSvc, 5000)
+	settleSvc := settlement.NewSettlementService()
+	anomalyDet := anomaly.NewAnomalyDetector()
+
+	deviceAuth := sync.NewDeviceAuthManager(map[string]string{"VAL_SECURE_01": "aktarbilet-validator-hmac-default-secret-2026"}, nil)
+
+	h := NewAPIHandler(nil, authSvc, pricingEngine, ledSvc, syncSvc, settleSvc, anomalyDet)
+	h.SetDeviceAuth(deviceAuth)
+	router := SetupRouter(h, "f85f26")
+
+	yolcuCard := domain.Card{
+		ID:           "CARD_DEVICE_01",
+		CardType:     domain.CardTypeTam,
+		BalanceKurus: 10000,
+	}
+	ledSvc.RegisterCard(yolcuCard)
+	syncSvc.RegisterCard(yolcuCard)
+
+	tapReq := TapRequest{
+		CardID:      "CARD_DEVICE_01",
+		ValidatorID: "VAL_SECURE_01",
+		LineID:      "LINE_500T",
+		StationID:   "STAT_KADIKOY",
+		SequenceNo:  1,
+		Direction:   1,
+		TappedAt:    time.Now(),
+	}
+	tapBytes, _ := json.Marshal(tapReq)
+
+	// 1. Request with invalid signature -> 401
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/validators/tap", bytes.NewReader(tapBytes))
+	req.Header.Set("X-Device-Signature", "invalid-signature")
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("Invalid device signature 401 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 2. Request with valid HMAC signature -> 200 OK
+	nowTs := tapReq.TappedAt.Unix()
+	bodyHash := sync.ComputePayloadHash(tapBytes)
+	validSig := deviceAuth.GenerateSignature("VAL_SECURE_01", 1, nowTs, "nonce-1", bodyHash)
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/validators/tap", bytes.NewReader(tapBytes))
+	req.Header.Set("X-Device-Signature", validSig)
+	req.Header.Set("X-Validator-ID", "VAL_SECURE_01")
+	req.Header.Set("X-Device-Timestamp", fmt.Sprintf("%d", nowTs))
+	req.Header.Set("X-Device-Nonce", "nonce-1")
+	req.Header.Set("Idempotency-Key", "device-auth-memory-no-db")
+	router.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("Kalıcı DB olmadan validatör auth fail-closed 503 dönmeli, alınan: %d (%s)", w.Code, w.Body.String())
+	}
+}
+
+func TestAPI_OptimizationApproval_And_Financials(t *testing.T) {
+	rig := setupTestRig()
+
+	// 1. GetLineFinancials
+	wFin := httptest.NewRecorder()
+	reqFin := httptest.NewRequest("GET", "/api/v1/reports/line-financials", nil)
+	reqFin.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(wFin, reqFin)
+	if wFin.Code != http.StatusOK {
+		t.Fatalf("GET /line-financials 200 dönmeli, alınan: %d", wFin.Code)
+	}
+
+	// 2. Headway scenario calculation
+	headwayBody, _ := json.Marshal(map[string]interface{}{
+		"line_id":                    "LINE_500T",
+		"target_headway_mins":        8,
+		"fleet_capacity_per_vehicle": 50,
+		"peak_hour":                  true,
+	})
+	wHead := httptest.NewRecorder()
+	reqHead := httptest.NewRequest("POST", "/api/v1/optimization/headway-scenario", bytes.NewReader(headwayBody))
+	reqHead.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(wHead, reqHead)
+	if wHead.Code != http.StatusOK {
+		t.Fatalf("POST /optimization/headway-scenario 200 dönmeli, alınan: %d", wHead.Code)
+	}
+
+	// 3. Approve optimization scenario (Unauthorized without role)
+	apprBody, _ := json.Marshal(map[string]interface{}{
+		"line_id":                    "LINE_500T",
+		"current_headway_minutes":    15,
+		"target_headway_minutes":     8,
+		"fleet_capacity":             50,
+		"vehicle_delta":              4,
+		"delta_cost_kurus":           4160000,
+		"projected_net_margin_kurus": 1200000,
+		"notes":                      "Pik saat ek filo onayı",
+	})
+	wApprAnon := httptest.NewRecorder()
+	reqApprAnon := httptest.NewRequest("POST", "/api/v1/optimization/approve", bytes.NewReader(apprBody))
+	rig.router.ServeHTTP(wApprAnon, reqApprAnon)
+	if wApprAnon.Code != http.StatusUnauthorized {
+		t.Fatalf("Anonim onay 401 dönmeli, alınan: %d", wApprAnon.Code)
+	}
+
+	// Yolcu role -> 403 Forbidden
+	wApprYolcu := httptest.NewRecorder()
+	reqApprYolcu := httptest.NewRequest("POST", "/api/v1/optimization/approve", bytes.NewReader(apprBody))
+	reqApprYolcu.Header.Set("Authorization", "Bearer "+rig.token(rig.yolcuUser))
+	rig.router.ServeHTTP(wApprYolcu, reqApprYolcu)
+	if wApprYolcu.Code != http.StatusForbidden {
+		t.Fatalf("Yolcu rolü onayda 403 dönmeli, alınan: %d", wApprYolcu.Code)
+	}
+
+	// Admin role with no durable PostgreSQL -> fail closed
+	wApprAdmin := httptest.NewRecorder()
+	reqApprAdmin := httptest.NewRequest("POST", "/api/v1/optimization/approve", bytes.NewReader(apprBody))
+	reqApprAdmin.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	reqApprAdmin.Header.Set("Idempotency-Key", "unit-approval-no-db")
+	rig.router.ServeHTTP(wApprAdmin, reqApprAdmin)
+	if wApprAdmin.Code != http.StatusServiceUnavailable {
+		t.Fatalf("PostgreSQL olmadan admin onayı 503 dönmeli, alınan: %d", wApprAdmin.Code)
+	}
+
+	// 4. Invalid optimization requests (missing line_id or invalid JSON)
+	wBadJSON := httptest.NewRecorder()
+	reqBadJSON := httptest.NewRequest("POST", "/api/v1/optimization/approve", bytes.NewReader([]byte("{invalid")))
+	reqBadJSON.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(wBadJSON, reqBadJSON)
+	if wBadJSON.Code != http.StatusBadRequest {
+		t.Fatalf("Geçersiz JSON 400 dönmeli, alınan: %d", wBadJSON.Code)
+	}
+
+	wNoLine := httptest.NewRecorder()
+	reqNoLine := httptest.NewRequest("POST", "/api/v1/optimization/approve", bytes.NewReader([]byte(`{"current_headway_minutes": 10}`)))
+	reqNoLine.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(wNoLine, reqNoLine)
+	if wNoLine.Code != http.StatusBadRequest {
+		t.Fatalf("Eksik hat ID 400 dönmeli, alınan: %d", wNoLine.Code)
+	}
+
+	// 5. Transit endpoints and handler setters
+	h := NewAPIHandler(nil, rig.authSvc, pricing.NewPricingEngine(), rig.ledgerSvc, rig.syncSvc, rig.settleSvc, rig.anomalyDet)
+	h.SetTransitService(transit.NewTransitService(nil))
+
+	wLines := httptest.NewRecorder()
+	reqLines := httptest.NewRequest("GET", "/api/v1/transit/lines", nil)
+	rig.router.ServeHTTP(wLines, reqLines)
+	if wLines.Code != http.StatusOK {
+		t.Fatalf("GET /transit/lines 200 dönmeli, alınan: %d", wLines.Code)
+	}
+
+	wBuses := httptest.NewRecorder()
+	reqBuses := httptest.NewRequest("GET", "/api/v1/transit/live-buses?line=800", nil)
+	rig.router.ServeHTTP(wBuses, reqBuses)
+	if wBuses.Code != http.StatusOK {
+		t.Fatalf("GET /transit/live-buses 200 dönmeli, alınan: %d", wBuses.Code)
 	}
 }

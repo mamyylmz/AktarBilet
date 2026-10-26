@@ -101,6 +101,10 @@ func (s *SyncService) IngestOfflineEvent(ctx context.Context, req IngestEventReq
 }
 
 func (s *SyncService) ingestPersistent(ctx context.Context, pool SyncDBPool, req IngestEventRequest) (*domain.ValidatorEvent, error) {
+	if req.IdempotencyKey == "" {
+		req.IdempotencyKey = fmt.Sprintf("SYNC:%s:%d", req.ValidatorID, req.SequenceNo)
+	}
+
 	// 1. İdempotansi Kontrolü: jw_validator_events tablosunu sorgula
 	var existing domain.ValidatorEvent
 	var rejectionReasonSql *string
@@ -118,6 +122,9 @@ func (s *SyncService) ingestPersistent(ctx context.Context, pool SyncDBPool, req
 	if err == nil {
 		if rejectionReasonSql != nil {
 			existing.RejectionReason = *rejectionReasonSql
+		}
+		if existing.IdempotencyKey == req.IdempotencyKey && (existing.CardID != req.CardID || existing.ValidatorID != req.ValidatorID) {
+			return nil, ErrIdempotencyConflict
 		}
 		return &existing, nil // İdempotent: zaten işlenmiş
 	}
@@ -208,6 +215,68 @@ func (s *SyncService) ingestPersistent(ctx context.Context, pool SyncDBPool, req
 		history,
 	)
 
+	// 5.1 Sırasız Olay Uzlaşması (Out-of-Order Delivery Reconciliation / CORE-04)
+	if pool != nil {
+		var futureEvID uuid.UUID
+		var futureFare domain.Kurus
+		var futureLineID, futureStationID string
+		var futureDirection int
+		var futureTappedAt time.Time
+		errFuture := pool.QueryRow(ctx, `
+			SELECT id, fare_charged_kurus, line_id, station_id, direction, tapped_at
+			FROM jw_validator_events
+			WHERE card_id = $1
+			  AND tapped_at > $2::timestamptz
+			  AND tapped_at <= ($2::timestamptz + INTERVAL '90 minutes')
+			  AND status = 'PROCESSED'
+			ORDER BY tapped_at ASC
+			LIMIT 1
+		`, req.CardID, req.TappedAt).Scan(
+			&futureEvID, &futureFare, &futureLineID, &futureStationID, &futureDirection, &futureTappedAt,
+		)
+		if errFuture == nil {
+			chronologicalHistory := append([]pricing.TripHistoryItem{}, history...)
+			chronologicalHistory = append(chronologicalHistory, pricing.TripHistoryItem{
+				LineID:        req.LineID,
+				StationID:     req.StationID,
+				Direction:     req.Direction,
+				TappedAt:      req.TappedAt,
+				IsTransfer:    calcRes.IsTransfer,
+				TransferLevel: calcRes.TransferLevel,
+			})
+
+			futureCard := card
+			futureCard.MonthlyCappingSpent = card.MonthlyCappingSpent - futureFare + calcRes.FareChargedKurus
+			if futureCard.MonthlyCappingSpent < 0 {
+				futureCard.MonthlyCappingSpent = 0
+			}
+			futureCalc := s.pricingEngine.CalculateFare(
+				futureCard, tariff, futureLineID, futureStationID, futureDirection, futureTappedAt, chronologicalHistory,
+			)
+			correction := futureFare - futureCalc.FareChargedKurus
+			if correction != 0 {
+				ref := fmt.Sprintf("OOO-REPRICE:%s", futureEvID)
+				if _, err := s.ledgerService.StornoCorrection(ctx, req.CardID, correction, ref, "Sırasız olay kronolojik ücret uzlaşması"); err != nil && !errors.Is(err, ledger.ErrIdempotencyConflict) {
+					return nil, fmt.Errorf("sırasız olay defter uzlaşması başarısız: %w", err)
+				}
+			}
+			if _, err := pool.Exec(ctx, `
+				UPDATE jw_validator_events
+				SET is_transfer = $1, transfer_level = $2, fare_charged_kurus = $3
+				WHERE id = $4
+			`, futureCalc.IsTransfer, futureCalc.TransferLevel, futureCalc.FareChargedKurus, futureEvID); err != nil {
+				return nil, fmt.Errorf("sırasız olay kaydı uzlaştırılamadı: %w", err)
+			}
+			if correction != 0 {
+				_, _ = pool.Exec(ctx, `
+					UPDATE jw_cards
+					SET monthly_capping_spent_kurus = GREATEST(0, monthly_capping_spent_kurus - $1 + $2)
+					WHERE id = $3
+				`, futureFare, futureCalc.FareChargedKurus, req.CardID)
+			}
+		}
+	}
+
 	// 6. Deftere İşleme ve Satır Kilitleme (T-3)
 	refID := fmt.Sprintf("SYNC:%s:%d", req.ValidatorID, req.SequenceNo)
 	desc := fmt.Sprintf("%s binişi (Seq: %d)", req.LineID, req.SequenceNo)
@@ -286,13 +355,23 @@ func (s *SyncService) ingestPersistent(ctx context.Context, pool SyncDBPool, req
 func (s *SyncService) ingestMemory(ctx context.Context, req IngestEventRequest) (*domain.ValidatorEvent, error) {
 	s.mu.Lock()
 
+	if req.IdempotencyKey == "" {
+		req.IdempotencyKey = fmt.Sprintf("SYNC:%s:%d", req.ValidatorID, req.SequenceNo)
+	}
+
 	seqKey := fmt.Sprintf("%s:%d", req.ValidatorID, req.SequenceNo)
 	if existing, exists := s.processedKeys[req.IdempotencyKey]; exists {
 		s.mu.Unlock()
+		if existing.CardID != req.CardID || existing.ValidatorID != req.ValidatorID {
+			return nil, ErrIdempotencyConflict
+		}
 		return existing, nil
 	}
 	if existing, exists := s.processedKeys[seqKey]; exists {
 		s.mu.Unlock()
+		if existing.CardID != req.CardID || existing.ValidatorID != req.ValidatorID {
+			return nil, ErrIdempotencyConflict
+		}
 		return existing, nil
 	}
 

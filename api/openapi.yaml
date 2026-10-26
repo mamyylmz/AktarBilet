@@ -1,0 +1,329 @@
+openapi: 3.0.3
+info:
+  title: AktarBilet Şehir İçi Toplu Taşıma Bilet ve Ücretlendirme API
+  description: >
+    AktarBilet platformu REST API spesifikasyonu.
+    Para birimleri daima integer kuruş cinsindendir.
+    Tüm API yanıtlarında 'X-DDO-Stamp: f85f26' HTTP başlığı yer alır.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: Yerel Geliştirme Sunucusu
+
+paths:
+  /health:
+    get:
+      summary: Genel sistem sağlık kontrolü
+      responses:
+        '200':
+          description: Sistem sağlıklı
+          headers:
+            X-DDO-Stamp:
+              schema:
+                type: string
+                example: f85f26
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /_hz/f85f:
+    get:
+      summary: Gizli sistem canari sağlık ucu
+      responses:
+        '200':
+          description: Canari kontrolü başarılı
+          headers:
+            X-DDO-Stamp:
+              schema:
+                type: string
+                example: f85f26
+
+  /api/v1/auth/login:
+    post:
+      summary: Kullanıcı oturum açma (JWT)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  example: yolcu@aktarbilet.gov.tr
+                password:
+                  type: string
+                  example: YolcuPassword123!
+      responses:
+        '200':
+          description: Başarılı oturum açma
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  user:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                      email:
+                        type: string
+                      role:
+                        type: string
+
+  /api/v1/cards/{cardId}:
+    get:
+      summary: Kart detay ve güncel bakiye sorgulama
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cardId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Kart bilgileri
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  balance_kurus:
+                    type: integer
+                    format: int64
+                  card_type:
+                    type: string
+
+  /api/v1/cards/{cardId}/recharge:
+    post:
+      summary: Karta bakiye yükleme (Kuruş cinsinden)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cardId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount_kurus]
+              properties:
+                amount_kurus:
+                  type: integer
+                  format: int64
+                  example: 5000
+                description:
+                  type: string
+      responses:
+        '200':
+          description: Bakiye başarıyla yüklendi
+        '401':
+          description: Yetkisiz erişim
+        '403':
+          description: Kart sahipliği ihlali
+
+  /api/v1/validators/tap:
+    post:
+      summary: Turnike geçiş ve tekli validatör tap işlemi (HMAC korumalı)
+      parameters:
+        - name: X-Validator-ID
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-Device-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-Device-Timestamp
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-Device-Nonce
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [validator_id, sequence_no, card_id, line_id, station_id, direction, tapped_at]
+              properties:
+                validator_id:
+                  type: string
+                sequence_no:
+                  type: integer
+                  format: int64
+                card_id:
+                  type: string
+                line_id:
+                  type: string
+                station_id:
+                  type: string
+                direction:
+                  type: integer
+                tapped_at:
+                  type: string
+                  format: date-time
+      responses:
+        '200':
+          description: Biniş başarıyla işlendi
+        '401':
+          description: Geçersiz veya eksik cihaz imzası
+        '403':
+          description: Validatör cihazı iptal edilmiş
+        '409':
+          description: Replay saldırısı tespit edildi
+
+  /api/v1/validators/batch-sync:
+    post:
+      summary: Çevrimdışı birikmiş validatör olaylarının toplu aktarımı
+      parameters:
+        - name: X-Validator-ID
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-Device-Signature
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-Device-Timestamp
+          in: header
+          required: false
+          schema:
+            type: string
+        - name: X-Device-Nonce
+          in: header
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                required: [idempotency_key, validator_id, sequence_no, card_id, line_id, station_id, direction, tapped_at]
+                properties:
+                  idempotency_key:
+                    type: string
+                  validator_id:
+                    type: string
+                  sequence_no:
+                    type: integer
+                    format: int64
+                  card_id:
+                    type: string
+                  line_id:
+                    type: string
+                  station_id:
+                    type: string
+                  direction:
+                    type: integer
+                  tapped_at:
+                    type: string
+                    format: date-time
+      responses:
+        '200':
+          description: Toplu paket başarıyla işlendi
+        '401':
+          description: Yetkisiz çağrı
+        '403':
+          description: Validatör kimlik karmaşası veya iptal
+
+  /api/v1/optimization/approve:
+    post:
+      summary: Sefer sıklığı optimizasyon senaryosunu onayla ve kalıcı kaydet
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [line_id, current_headway_minutes, target_headway_minutes]
+              properties:
+                line_id:
+                  type: string
+                current_headway_minutes:
+                  type: integer
+                target_headway_minutes:
+                  type: integer
+                fleet_capacity:
+                  type: integer
+                vehicle_delta:
+                  type: integer
+                delta_cost_kurus:
+                  type: integer
+                  format: int64
+                projected_net_margin_kurus:
+                  type: integer
+                  format: int64
+                notes:
+                  type: string
+      responses:
+        '201':
+          description: Onay kaydı başarıyla oluşturuldu
+        '403':
+          description: Yetkisiz rol (yalnızca hat yöneticisi veya admin)
+
+  /api/v1/transit/live-buses:
+    get:
+      summary: Resmî İzmir ESHOT API canlı araç konumları
+      parameters:
+        - name: line
+          in: query
+          required: false
+          schema:
+            type: string
+            example: '800'
+      responses:
+        '200':
+          description: Canlı otobüs konumları ve metaveri
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+

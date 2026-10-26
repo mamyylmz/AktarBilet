@@ -21,7 +21,7 @@ export default defineConfig({
     ['html', { outputFolder: './artifacts/html-report', open: 'never' }]
   ],
   use: {
-    baseURL: process.env.QA_FRONTEND_URL || 'http://127.0.0.1:13000',
+    baseURL: process.env.QA_FRONTEND_URL || 'http://127.0.0.1:3000',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure'

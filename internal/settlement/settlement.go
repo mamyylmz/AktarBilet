@@ -151,6 +151,27 @@ func (s *SettlementService) CreatePeriod(name string, start, end time.Time) *Set
 	return p
 }
 
+func (s *SettlementService) EnsurePeriod(id uuid.UUID, name string, start, end time.Time) *SettlementPeriod {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if p, ok := s.periods[id]; ok {
+		return p
+	}
+
+	p := &SettlementPeriod{
+		ID:             id,
+		Name:           name,
+		StartDate:      start,
+		EndDate:        end,
+		IsClosed:       false,
+		OperatorShares: make(map[string]domain.Kurus),
+		Entries:        make([]SettlementLedgerEntry, 0),
+	}
+	s.periods[id] = p
+	return p
+}
+
 func (s *SettlementService) RecordTripSettlement(
 	periodID uuid.UUID,
 	eventID *uuid.UUID,

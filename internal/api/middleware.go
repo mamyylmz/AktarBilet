@@ -85,6 +85,12 @@ func AuthMiddleware(authSvc *auth.AuthService) func(http.Handler) http.Handler {
 				return
 			}
 
+			// SEC-02: Refresh token cannot be used as an access token
+			if claims.TokenType == "refresh" {
+				WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Yenileme jetonu doğrudan erişim jetonu olarak kullanılamaz")
+				return
+			}
+
 			ctx := context.WithValue(r.Context(), UserContextKey, claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

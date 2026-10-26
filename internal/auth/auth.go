@@ -18,10 +18,12 @@ var (
 )
 
 type Claims struct {
-	UserID   uuid.UUID       `json:"user_id"`
-	Email    string          `json:"email"`
-	FullName string          `json:"full_name"`
-	Role     domain.UserRole `json:"role"`
+	UserID    uuid.UUID         `json:"user_id"`
+	Email     string            `json:"email"`
+	FullName  string            `json:"full_name"`
+	Role      domain.UserRole   `json:"role"`
+	Roles     []domain.UserRole `json:"roles,omitempty"`
+	TokenType string            `json:"token_type"`
 	jwt.RegisteredClaims
 }
 
@@ -48,10 +50,12 @@ func (s *AuthService) CheckPassword(hash, password string) bool {
 func (s *AuthService) GenerateTokens(user *domain.User) (string, string, error) {
 	// Access Token: 15 dakika
 	accessClaims := &Claims{
-		UserID:   user.ID,
-		Email:    user.Email,
-		FullName: user.FullName,
-		Role:     user.Role,
+		UserID:    user.ID,
+		Email:     user.Email,
+		FullName:  user.FullName,
+		Role:      user.Role,
+		Roles:     user.Roles,
+		TokenType: "access",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -66,7 +70,8 @@ func (s *AuthService) GenerateTokens(user *domain.User) (string, string, error) 
 
 	// Refresh Token: 7 gün
 	refreshClaims := &Claims{
-		UserID: user.ID,
+		UserID:    user.ID,
+		TokenType: "refresh",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(7 * 24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),

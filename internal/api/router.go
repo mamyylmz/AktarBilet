@@ -43,16 +43,21 @@ func SetupRouter(h *APIHandler, ddoStamp string) *chi.Mux {
 		// Kimlik
 		r.Post("/auth/login", h.Login)
 		r.With(RequireAuth()).Get("/auth/me", h.GetMe)
+		r.With(RequireAuth()).Post("/auth/switch-role", h.SwitchRole)
 
-		// Ulaşım Bilgileri (Herkese açık katalog)
+		// Ulaşım Bilgileri (Herkese açık katalog ve hat yöneticisi yönetimi)
 		r.Get("/lines", h.ListLines)
+		r.With(RequireRole(h.pool, domain.RoleHatYoneticisi, domain.RoleAdmin)).Post("/lines", h.CreateLine)
 		r.Get("/stations", h.ListStations)
 		r.Get("/tariffs", h.ListTariffs)
 		r.Get("/reports/heatmap", h.GetHeatmap)
 
+		// Canlı Ulaşım & ESHOT Entegrasyonu (P1)
+		r.Get("/transit/live-buses", h.GetLiveBuses)
+		r.Get("/transit/lines", h.GetTransitLines)
+
 		// Kart Yönetimi (Kimlik doğrulamalı & IDOR korumalı)
 		r.Route("/cards", func(r chi.Router) {
-			r.Use(RequireAuth())
 			r.Get("/{id}", h.GetCard)
 			r.Get("/{id}/ledger", h.GetCardLedger)
 			r.Post("/{id}/recharge", h.RechargeCard)
@@ -67,12 +72,14 @@ func SetupRouter(h *APIHandler, ddoStamp string) *chi.Mux {
 		// Saha Kontrol & Cezalar (Yalnız Kontrolör & Admin; Operasyon ve diğerlerine kapalı)
 		r.Route("/penalties", func(r chi.Router) {
 			r.With(RequireRole(h.pool, domain.RoleKontrolor, domain.RoleAdmin)).Post("/", h.CreatePenalty)
-			r.With(RequireAuth()).Get("/", h.ListPenalties)
+			r.With(RequireRole(h.pool, domain.RoleKontrolor, domain.RoleAdmin)).Get("/", h.ListPenalties)
 		})
 
 		// Gelir Paylaşımı ve Muhasebe (Muhasebe & Admin)
 		r.Route("/settlements", func(r chi.Router) {
+			r.With(RequireRole(h.pool, domain.RoleMuhasebe, domain.RoleAdmin)).Get("/", h.ListSettlements)
 			r.With(RequireRole(h.pool, domain.RoleMuhasebe, domain.RoleAdmin)).Post("/close", h.CloseSettlementPeriod)
+			r.With(RequireRole(h.pool, domain.RoleMuhasebe, domain.RoleAdmin)).Post("/reopen", h.ReopenSettlementPeriod)
 			r.With(RequireRole(h.pool, domain.RoleMuhasebe, domain.RoleAdmin)).Post("/storno", h.StornoSettlement)
 		})
 
@@ -81,8 +88,15 @@ func SetupRouter(h *APIHandler, ddoStamp string) *chi.Mux {
 			r.With(RequireRole(h.pool, domain.RoleOperasyon, domain.RoleAdmin)).Get("/", h.GetAnomalies)
 		})
 
-		// Bonus 3: Tarife Değişikliği Etki Simülasyonu (Kimlik doğrulamalı)
-		r.With(RequireAuth()).Post("/simulation/fare-impact", h.SimulateFareImpact)
+		// Raporlama & Hat Karlılığı (Muhasebe, Hat Yöneticisi, Operasyon, Admin)
+		r.With(RequireRole(h.pool, domain.RoleMuhasebe, domain.RoleHatYoneticisi, domain.RoleOperasyon, domain.RoleAdmin)).Get("/reports/line-financials", h.GetLineFinancials)
+
+		// Hat Sıklık & Maliyet Optimizasyonu (Hat Yöneticisi, Admin)
+		r.With(RequireRole(h.pool, domain.RoleHatYoneticisi, domain.RoleAdmin)).Post("/optimization/headway-scenario", h.SimulateHeadwayScenario)
+		r.With(RequireRole(h.pool, domain.RoleHatYoneticisi, domain.RoleAdmin)).Post("/optimization/approve", h.ApproveOptimizationScenario)
+
+		// Tarife Değişikliği Etki Simülasyonu (Yalnız Hat Yöneticisi & Admin)
+		r.With(RequireRole(h.pool, domain.RoleHatYoneticisi, domain.RoleAdmin)).Post("/simulation/fare-impact", h.SimulateFareImpact)
 	})
 
 	return r
