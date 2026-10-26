@@ -196,10 +196,29 @@ export function AccountingPortal({
           subtitle="Aylık mutabakatı mühürleme veya yetkili denetim kapsamında yeniden açma"
         >
           <div className="space-y-4">
+            {/* 1. Canlı Durum Rozeti (Status Badge) */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-lg border bg-surface-muted border-border gap-2">
+              <span className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                Aktif Dönem: <strong>2026-EKİM</strong>
+              </span>
+              {isPeriodClosed ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-danger/15 text-danger border border-danger/30">
+                  <span className="w-2 h-2 rounded-full bg-danger animate-pulse" aria-hidden="true" />
+                  🔒 DÖNEM DURUMU: KAPALI (Kayıtlar Kilitli & Denetime Hazır)
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-success/15 text-success border border-success/30">
+                  <span className="w-2 h-2 rounded-full bg-success animate-pulse" aria-hidden="true" />
+                  ● DÖNEM DURUMU: AÇIK (İşlemler Devam Ediyor)
+                </span>
+              )}
+            </div>
+
             <p className="text-sm text-foreground">
               Dönem kapatıldığında geçmişe dönük biniş defteri dondurulur, işletmeci hakediş talimatları kesinleşir.
             </p>
 
+            {/* 2. Akıllı Aksiyon Alanı */}
             {isPeriodClosed ? (
               <div className="space-y-3">
                 <div role="status" className="p-3 bg-surface-muted border border-danger/30 rounded-lg text-sm text-danger font-medium">
@@ -211,7 +230,7 @@ export function AccountingPortal({
                   <Button
                     variant="outline"
                     onClick={() => setShowReopenConfirm(true)}
-                    className="w-full"
+                    className="w-full font-medium"
                   >
                     2026-EKIM Dönemini Tekrar Aç (Reopen)
                   </Button>
@@ -230,6 +249,7 @@ export function AccountingPortal({
                         value={reopenReason}
                         onChange={(e) => setReopenReason(e.target.value)}
                         className="input text-xs w-full"
+                        placeholder="Örn: Denetim ve mutabakat düzeltmesi"
                         required
                       />
                     </div>
@@ -256,14 +276,19 @@ export function AccountingPortal({
                 )}
               </div>
             ) : (
-              <Button
-                variant="danger"
-                onClick={onClosePeriod}
-                loading={closingPeriod}
-                className="w-full"
-              >
-                Dönemi Kapat
-              </Button>
+              <div className="space-y-2">
+                <Button
+                  variant="danger"
+                  onClick={onClosePeriod}
+                  loading={closingPeriod}
+                  className="w-full font-semibold"
+                >
+                  Dönemi Kapat ve Mutabakatı Kesinleştir
+                </Button>
+                <p className="text-xs text-muted text-center italic">
+                  Dönem henüz kapatılmamıştır. Yeniden açma (reopen) işlemi yalnızca kapatılmış dönemlerde yetkili denetim amacıyla yapılabilir.
+                </p>
+              </div>
             )}
           </div>
         </Card>

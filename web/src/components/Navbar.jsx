@@ -84,6 +84,69 @@ export function Navbar({
             >
               Isı Haritası
             </button>
+
+            {/* Yetkili Kullanıcı Portal Linkleri */}
+            {currentUser && currentUser.role === 'muhasebe' && (
+              <button
+                type="button"
+                onClick={() => handleNavClick(() => onRoleSelect('muhasebe'))}
+                className={`nav-link ${activeRole === 'muhasebe' ? 'active' : ''}`}
+                aria-current={activeRole === 'muhasebe' ? 'page' : undefined}
+              >
+                📊 Muhasebe Portalı
+              </button>
+            )}
+            {currentUser && currentUser.role === 'hat_yoneticisi' && (
+              <button
+                type="button"
+                onClick={() => handleNavClick(() => onRoleSelect('hat_yoneticisi'))}
+                className={`nav-link ${activeRole === 'hat_yoneticisi' ? 'active' : ''}`}
+                aria-current={activeRole === 'hat_yoneticisi' ? 'page' : undefined}
+              >
+                🚌 Hat Yönetimi
+              </button>
+            )}
+            {currentUser && currentUser.role === 'kontrolor' && (
+              <button
+                type="button"
+                onClick={() => handleNavClick(() => onRoleSelect('kontrolor'))}
+                className={`nav-link ${activeRole === 'kontrolor' ? 'active' : ''}`}
+                aria-current={activeRole === 'kontrolor' ? 'page' : undefined}
+              >
+                👮 Kontrolör Portalı
+              </button>
+            )}
+            {currentUser && currentUser.role === 'operasyon' && (
+              <button
+                type="button"
+                onClick={() => handleNavClick(() => onRoleSelect('operasyon'))}
+                className={`nav-link ${activeRole === 'operasyon' ? 'active' : ''}`}
+                aria-current={activeRole === 'operasyon' ? 'page' : undefined}
+              >
+                📡 Operasyon Portalı
+              </button>
+            )}
+            {currentUser && currentUser.role === 'admin' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleNavClick(() => onRoleSelect('admin'))}
+                  className={`nav-link ${activeRole === 'admin' ? 'active' : ''}`}
+                  aria-current={activeRole === 'admin' ? 'page' : undefined}
+                >
+                  ⚙️ Sistem Yönetimi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNavClick(() => onRoleSelect('muhasebe'))}
+                  className={`nav-link ${activeRole === 'muhasebe' ? 'active' : ''}`}
+                  aria-current={activeRole === 'muhasebe' ? 'page' : undefined}
+                  title="Muhasebe ve Mutabakat Denetimi"
+                >
+                  📊 Muhasebe Denetimi
+                </button>
+              </>
+            )}
           </nav>
         </div>
 
@@ -239,6 +302,34 @@ export function Navbar({
             >
               🔥 Isı Haritası
             </button>
+
+            {currentUser && currentUser.role === 'muhasebe' && (
+              <button
+                type="button"
+                onClick={() => handleNavClick(() => onRoleSelect('muhasebe'))}
+                className={`btn btn-sm text-left justify-start w-full col-span-2 ${activeRole === 'muhasebe' ? 'btn-primary' : 'btn-outline'}`}
+              >
+                📊 Muhasebe Portalı
+              </button>
+            )}
+            {currentUser && currentUser.role === 'admin' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleNavClick(() => onRoleSelect('admin'))}
+                  className={`btn btn-sm text-left justify-start w-full ${activeRole === 'admin' ? 'btn-primary' : 'btn-outline'}`}
+                >
+                  ⚙️ Sistem Yönetimi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleNavClick(() => onRoleSelect('muhasebe'))}
+                  className={`btn btn-sm text-left justify-start w-full ${activeRole === 'muhasebe' ? 'btn-primary' : 'btn-outline'}`}
+                >
+                  📊 Muhasebe Denetimi
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

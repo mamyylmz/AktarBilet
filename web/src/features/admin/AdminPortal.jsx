@@ -126,6 +126,24 @@ export function AdminPortal({ token, onShowToast, onRolePreview, activeRole }) {
         </div>
       </Card>
 
+      {/* Mali Mutabakat ve Dönem Kapanış Denetimi Kısayolu */}
+      <div className="p-4 bg-surface-muted border border-border rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h4 className="text-sm font-semibold text-foreground">Mali Mutabakat ve Dönem Kapanış Denetimi</h4>
+          <p className="text-xs text-muted">
+            İşletmeci gelir paylaşımı, dönem kapatma ve storno düzeltmelerini incelemek ve denetlemek için Muhasebe Portalı'na geçin.
+          </p>
+        </div>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => onRolePreview && onRolePreview('muhasebe')}
+          className="whitespace-nowrap"
+        >
+          📊 Muhasebe Portalına Git
+        </Button>
+      </div>
+
       <div className="portal-header flex justify-between items-center">
         <div>
           <h2 className="portal-title">Sistem Yöneticisi Konsolu</h2>
