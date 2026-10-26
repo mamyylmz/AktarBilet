@@ -228,4 +228,3 @@ func (o *ReferenceFareOracle) CalculateExpectedFare(
 		Reason:           reason,
 	}
 }
-
