@@ -125,9 +125,9 @@ export function HomePage({
             </div>
             <div className="transfer-step-box">
               <div className="step-num">2. Adım</div>
-              <h4 className="step-title">90 Dakikalık Aktarma Penceresi</h4>
+              <h4 className="step-title">90 Dakikalık Aktarma Penceresi (En Fazla 2 Aktarma)</h4>
               <p className="step-desc">
-                Sayaç sıfırlanana kadar yapacağınız müteakip binişler (farklı hat veya araçlarda) aktarma kapsamına girer ve ücretsiz geçer.
+                Sayaç sıfırlanana kadar en fazla 2 indirimli veya ücretsiz aktarma yapılabilir. 3. veya 4. aktarma seçeneği kesinlikle bulunmaz.
               </p>
             </div>
             <div className="transfer-step-box">
@@ -158,7 +158,7 @@ export function HomePage({
                 <tr>
                   <th scope="col">Tarife Türü</th>
                   <th scope="col" className="text-right">İlk Biniş Bedeli</th>
-                  <th scope="col">90 Dk İçi Aktarma</th>
+                  <th scope="col">90 Dk İçi Aktarma (Maks. 2 Kez)</th>
                   <th scope="col">Kullanım Kapsamı</th>
                 </tr>
               </thead>

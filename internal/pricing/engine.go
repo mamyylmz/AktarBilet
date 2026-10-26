@@ -161,7 +161,10 @@ func (e *PricingEngine) CalculateFare(
 				calculatedFare -= discountAmount
 				reason = "İndirimli aktarma uygulandı"
 			} else {
-				reason = "Maksimum 2 aktarma limitine ulaşıldı"
+				// KESİNLİKLE EN FAZLA İKİ AKTARMA: 3. aktarma, 4. aktarma ve fazlası kesinlikle engellenir
+				isTransfer = false
+				transferLevel = 0
+				reason = "Maksimum 2 aktarma limitine ulaşıldı (3. veya daha fazla aktarma yapılamaz)"
 			}
 		}
 	}

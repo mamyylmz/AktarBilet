@@ -51,9 +51,9 @@ export function LegalModal({
         return (
           <div className="space-y-4 text-sm text-foreground">
             <div>
-              <h4 className="font-semibold text-base mb-1">1. Biniş ve 90 Dakika Aktarma Kuralı</h4>
+              <h4 className="font-semibold text-base mb-1">1. Biniş ve 90 Dakika Aktarma Kuralı (En Fazla 2 Aktarma)</h4>
               <p>
-                Otobüs, metro veya vapura ilk biniş yapıldığında sistem standart tarifeyi uygular ve 90 dakikalık geri sayım sayacını başlatır. Sayaç süresince farklı hatlarda yapılan 1. aktarma %50, 2. aktarma %75 indirimle veya ücretsiz olarak gerçekleşir.
+                Otobüs, metro veya vapura ilk biniş yapıldığında sistem standart tarifeyi uygular ve 90 dakikalık geri sayım sayacını başlatır. Sayaç süresince farklı hatlarda en fazla 2 aktarma (1. aktarma %50, 2. aktarma %75 indirimle veya ücretsiz) yapılabilir. Üçüncü, dördüncü veya daha fazla aktarma seçeneği kesinlikle bulunmamakta olup, müteakip binişler tam tarife üzerinden ücretlendirilir.
               </p>
             </div>
             <div>

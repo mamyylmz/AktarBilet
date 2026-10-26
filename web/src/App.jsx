@@ -115,9 +115,18 @@ export default function App() {
 
   // 90 min countdown timer effect
   useEffect(() => {
-    if (transferTimer <= 0) return;
+    if (transferTimer <= 0) {
+      setTransferLevel(0);
+      return;
+    }
     const interval = setInterval(() => {
-      setTransferTimer((prev) => (prev > 0 ? prev - 1 : 0));
+      setTransferTimer((prev) => {
+        if (prev <= 1) {
+          setTransferLevel(0);
+          return 0;
+        }
+        return prev - 1;
+      });
     }, 1000);
     return () => clearInterval(interval);
   }, [transferTimer]);
@@ -401,14 +410,25 @@ export default function App() {
         } else {
           const fareCharged = ev?.fare_charged_kurus ?? 2000;
           const fareTL = (fareCharged / 100).toFixed(2);
-          const transferInfo = ev?.is_transfer ? ` (Aktarma #${ev.transfer_level})` : '';
-          showToast(`Kartınız ${lineName} turnikesinde başarıyla okutuldu.${transferInfo} Tutar: ₺${fareTL}`, 'success');
 
-          if (transferTimer <= 0) {
-            setTransferTimer(5400); // 90 min countdown
-            setTransferLevel(1);
+          // Kesin Kural: En fazla 2 aktarma yapılabilir (3. veya 4. aktarma kesinlikle yok)
+          if (ev?.is_transfer && ev.transfer_level <= 2) {
+            showToast(`Kartınız ${lineName} turnikesinde başarıyla okutuldu. (Aktarma #${ev.transfer_level} - Maks. 2 Aktarma) Tutar: ₺${fareTL}`, 'success');
+            if (ev.transfer_level === 1) {
+              setTransferLevel(2); // 1. aktarma yapıldı, sırada 2. aktarma var
+            } else {
+              setTransferLevel(0); // 2. aktarma tamamlandı, aktarma hakkı bitti (3. aktarma yok)
+            }
           } else {
-            setTransferLevel((prev) => prev + 1);
+            // Aktarma değil: İlk biniş veya 2 aktarma kotası dolmuş biniş
+            if (transferTimer <= 0) {
+              showToast(`Kartınız ${lineName} turnikesinde başarıyla okutuldu. (İlk Biniş) Tutar: ₺${fareTL}`, 'success');
+              setTransferTimer(5400); // 90 min countdown
+              setTransferLevel(1); // 1. aktarma hakkı aktif
+            } else {
+              showToast(`Kartınız ${lineName} turnikesinde okutuldu. (Tam Tarife: ₺${fareTL} - En fazla 2 aktarma kuralı nedeniyle 3. veya ilave aktarma yapılamaz)`, 'info');
+              setTransferLevel(0); // Kota dolu, 3. veya daha fazla aktarma yok
+            }
           }
         }
 

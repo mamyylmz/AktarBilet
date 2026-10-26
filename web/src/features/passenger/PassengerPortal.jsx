@@ -138,9 +138,23 @@ export function PassengerPortal({
                   <div>
                     <h4 className="font-semibold text-sm">90 Dakika Aktarma Durumu</h4>
                     <p className="text-xs text-muted">
-                      {transferTimer > 0
-                        ? `${transferLevel}. aktarma hakkı aktif. Farklı yönde indirimli geçiş uygulanır.`
-                        : 'Aktif aktarma penceresi bulunmuyor. İlk biniş standart tarifeden ücretlendirilir.'}
+                      {transferTimer > 0 ? (
+                        transferLevel === 1 ? (
+                          <span className="text-success font-medium">
+                            1. aktarma hakkı aktif (En fazla 2 aktarma yapılabilir). Farklı hatta indirimli geçiş uygulanır.
+                          </span>
+                        ) : transferLevel === 2 ? (
+                          <span className="text-amber-500 font-medium">
+                            2. aktarma hakkı aktif (Son aktarma hakkı). Farklı hatta indirimli geçiş uygulanır.
+                          </span>
+                        ) : (
+                          <span className="text-danger font-medium">
+                            Maksimum 2 aktarma sınırına ulaşıldı. 3. veya daha fazla aktarma seçeneği kesinlikle yoktur; yeni binişler tam tarifedir.
+                          </span>
+                        )
+                      ) : (
+                        'Aktif aktarma penceresi bulunmuyor. İlk biniş standart tarifeden ücretlendirilir.'
+                      )}
                     </p>
                   </div>
                   {transferTimer > 0 && (
