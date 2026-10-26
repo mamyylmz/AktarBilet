@@ -75,27 +75,6 @@ export function Navbar({
             >
               Isı Haritası
             </button>
-            <button
-              type="button"
-              onClick={() => handleNavClick(() => onOpenLegal('how-it-works'))}
-              className="nav-link"
-            >
-              Nasıl Çalışır?
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavClick(() => onOpenLegal('about'))}
-              className="nav-link"
-            >
-              Hakkımızda
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavClick(() => onOpenLegal('help'))}
-              className="nav-link"
-            >
-              Yardım
-            </button>
           </nav>
         </div>
 
@@ -243,18 +222,6 @@ export function Navbar({
               className={`btn btn-sm text-left justify-start w-full ${activeRole === 'heatmap' ? 'btn-primary' : 'btn-outline'}`}
             >
               🔥 Isı Haritası
-            </button>
-          </div>
-
-          <div className="pt-2 border-t border-border flex justify-around text-xs text-muted">
-            <button type="button" onClick={() => handleNavClick(() => onOpenLegal('how-it-works'))} className="hover:text-primary py-1">
-              Nasıl Çalışır?
-            </button>
-            <button type="button" onClick={() => handleNavClick(() => onOpenLegal('about'))} className="hover:text-primary py-1">
-              Hakkımızda
-            </button>
-            <button type="button" onClick={() => handleNavClick(() => onOpenLegal('help'))} className="hover:text-primary py-1">
-              Yardım
             </button>
           </div>
         </div>
