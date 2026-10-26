@@ -369,4 +369,19 @@ TOPLAM: 12 | GEÇEN: 11 | BAŞARISIZ: 1
 
 ---
 
+## Karşılanamayan ya da tam olarak ölçülememiş testler, istekler ve kriterler
+
+- **T-1 ücret motoru:** Sırasız gelen üç veya daha fazla olayda nihai ücret deterministik değildir.
+- **T-5 kapasite:** Saatte 1 milyon biniş olayının gerçekten kaydedilip raporlanabildiği henüz kanıtlanmamıştır.
+- **Yük testi:** Mevcut yük betiği geçerli HMAC imzası üretmediği için olaylar reddedilmekte ve gerçek kalıcı yazım kapasitesi ölçülememektedir.
+- **Keyset pagination:** Ceza ve anomali gibi büyük listelerde cursor/keyset pagination bulunmamaktadır.
+- **Performans ölçümleri:** README'deki p50, p95, p99 ve throughput değerleri güncel ve başarılı bir persisted-event testiyle doğrulanmamıştır.
+- **Otomatik testlerin bütünü:** Son bağımsız Playwright koşusunda seçilen 149 testin 141'i geçmiş, 8'i başarısız olmuştur.
+- **Docker cold start:** Boş Docker önbelleğiyle başlatmanın 5 dakikanın altında tamamlandığı ölçülmemiştir.
+- **Seed determinizmi:** Aynı seed'in iki tamamen bağımsız üretimde aynı veriyi oluşturduğu tam veri hash karşılaştırmasıyla doğrulanmamıştır.
+
+Ayrıntılı kanıt ve düzeltme önerileri `qa/reports/CODEX_FINAL_PROJE_MD_ACCEPTANCE.md` raporunda yer almaktadır.
+
+---
+
 DDO Case Kodu: SEDIR-f85f26
