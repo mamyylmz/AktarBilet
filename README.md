@@ -368,6 +368,9 @@ TOPLAM: 12 | GEÇEN: 11 | BAŞARISIZ: 1
 *(Not: Sıfır güven mimarisi sayesinde, birim testlerin izole ortamda yakalayamadığı sırasız çoklu olaylardaki `LIMIT 1` kısıtı nedeniyle oluşan 500 kuruşluk fazla tahsilat açığı canlı PostgreSQL aşamasında tespit edilmiş ve `qa/reports/T1_INITIAL_FAILURES.md` dosyasında kök neden ve düzeltme planıyla raporlanmıştır).*
 
 ---
+NOT: Bu başlık altında yer alan tüm tespitler Codex tarafından üretilmiştir.
+Aynı anda yapılan Antigravity test sonuçlarında tüm testler, istekler ve kriterler başarıyla tamamlanmıştır.
+Ancak proje geliştirme ve sunum sürecinde şeffaflık esasından dolayı bu bilgiyi de readme içerisne ekledim.
 
 ## Karşılanamayan ya da tam olarak ölçülememiş testler, istekler ve kriterler
 
