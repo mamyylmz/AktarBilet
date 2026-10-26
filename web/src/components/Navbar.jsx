@@ -1,5 +1,14 @@
 import React, { useState } from 'react';
 
+const ROLE_LABELS = {
+  admin: 'Admin',
+  hat_yoneticisi: 'Hat Yöneticisi',
+  kontrolor: 'Kontrolör',
+  muhasebe: 'Muhasebe',
+  operasyon: 'Operasyon',
+  yolcu: 'Yolcu',
+};
+
 export function Navbar({
   currentUser,
   onOpenLogin,
@@ -97,22 +106,29 @@ export function Navbar({
             <div className="user-profile-menu flex items-center gap-2">
               {/* Çoklu Rol Seçici */}
               {isMultiRole && (
-                <div className="multi-role-selector flex items-center gap-1 bg-surface-muted p-1 rounded-md border border-border">
-                  {currentUser.roles.map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      onClick={() => onSwitchUserRole(r)}
-                      className={`text-xs px-2 py-0.5 rounded font-medium transition-colors ${
-                        currentUser.role === r
-                          ? 'bg-brand text-white shadow-sm'
-                          : 'text-muted hover:text-foreground'
-                      }`}
-                      aria-label={`${r} rolüne geç`}
-                    >
-                      {r === 'admin' ? 'Admin' : r === 'yolcu' ? 'Yolcu' : r}
-                    </button>
-                  ))}
+                <div
+                  className="multi-role-selector"
+                  role="group"
+                  aria-label="Yönetici Rol Değiştirici"
+                >
+                  {currentUser.roles.map((r) => {
+                    const isActive = currentUser.role === r;
+                    const label = ROLE_LABELS[r] || r;
+                    return (
+                      <button
+                        key={r}
+                        type="button"
+                        data-role={r}
+                        onClick={() => onSwitchUserRole(r)}
+                        className={`role-switch-btn ${isActive ? 'active' : ''}`}
+                        aria-pressed={isActive}
+                        aria-label={`${label} rolüne geç`}
+                        title={`${label} rolüne geç`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
 

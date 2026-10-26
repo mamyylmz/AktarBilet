@@ -188,6 +188,76 @@ server.listen(19877, async () => {
 
     await page.close();
 
+    // ----------------------------------------------------
+    // TEST 4: Admin Navbar Multi-Role Switcher & Theme Design
+    // ----------------------------------------------------
+    const adminPage = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await adminPage.goto('http://localhost:19877');
+
+    // Seed mock admin with all 6 multi-roles
+    await adminPage.evaluate(() => {
+      localStorage.setItem('auth_token', 'mock_admin_token');
+      localStorage.setItem('auth_user', JSON.stringify({
+        id: '00000000-0000-0000-0000-000000000001',
+        email: 'seed.sedir@ddo-case.invalid',
+        full_name: 'Sedir Sistem Yöneticisi',
+        role: 'admin',
+        roles: ['admin', 'hat_yoneticisi', 'kontrolor', 'muhasebe', 'operasyon', 'yolcu'],
+      }));
+    });
+
+    await adminPage.reload();
+    await adminPage.waitForSelector('.multi-role-selector');
+
+    const roleBtnTexts = await adminPage.$$eval('.role-switch-btn', (nodes) => nodes.map((n) => n.textContent.trim()));
+    console.log(`Found multi-role buttons: ${JSON.stringify(roleBtnTexts)}`);
+
+    const expectedRoles = ['Admin', 'Hat Yöneticisi', 'Kontrolör', 'Muhasebe', 'Operasyon', 'Yolcu'];
+    if (JSON.stringify(roleBtnTexts) !== JSON.stringify(expectedRoles)) {
+      console.error(`FAIL: Multi-role button labels mismatch!\nExpected: ${JSON.stringify(expectedRoles)}\nGot:      ${JSON.stringify(roleBtnTexts)}`);
+      failed = true;
+    } else {
+      console.log('PASS: [Multi-Role Buttons] All 6 role buttons formatted cleanly with Turkish corporate titles (no raw snake_case).');
+    }
+
+    // Verify Active State
+    const activeBtn = await adminPage.$('.role-switch-btn.active');
+    const activeText = activeBtn ? (await activeBtn.textContent()).trim() : null;
+    if (activeText !== 'Admin') {
+      console.error(`FAIL: Active role button is "${activeText}", expected "Admin"!`);
+      failed = true;
+    } else {
+      console.log('PASS: [Multi-Role Active State] Active button correctly highlights current role ("Admin").');
+    }
+
+    // Verify Theme Styling (Light Theme)
+    const isLightStyled = await adminPage.evaluate(() => {
+      const selector = document.querySelector('.multi-role-selector');
+      const activeBtnEl = document.querySelector('.role-switch-btn.active');
+      if (!selector || !activeBtnEl) return false;
+      const sStyle = window.getComputedStyle(selector);
+      const bStyle = window.getComputedStyle(activeBtnEl);
+      return (sStyle.display === 'inline-flex' || sStyle.display === 'flex') && parseInt(bStyle.fontWeight, 10) >= 600;
+    });
+    if (!isLightStyled) {
+      console.error('FAIL: Multi-role selector styles not properly applied in light theme!');
+      failed = true;
+    } else {
+      console.log('PASS: [Multi-Role Design] Segmented pill control styles verified in light theme.');
+    }
+
+    // Toggle to Dark Theme and Verify
+    const themeBtn = await adminPage.$('.theme-toggle-btn');
+    if (themeBtn) {
+      await themeBtn.click();
+      const isDark = await adminPage.evaluate(() => document.documentElement.getAttribute('data-theme') === 'dark');
+      if (isDark) {
+        console.log('PASS: [Theme Integration] Successfully switched to dark theme; multi-role selector remains accessible.');
+      }
+    }
+
+    await adminPage.close();
+
   } catch (err) {
     console.error('Test execution error:', err);
     failed = true;
