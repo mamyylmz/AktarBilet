@@ -45,11 +45,24 @@ jobs:
           go vet ./...
           test -z "$(gofmt -l .)" || (echo "Formatlanmamış dosyalar mevcut:" && gofmt -l . && exit 1)
 
+      - name: Validatör Test Kimliklerini Hazırla
+        run: |
+          mkdir -p /tmp/aktarbilet-secrets
+          cat << 'EOF' > /tmp/aktarbilet-secrets/validator-credentials.json
+          {
+            "VAL_500T_01": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "VAL_14ES_01": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+            "VAL_T1_01": "1111222233334444555566667777888811112222333344445555666677778888",
+            "VAL_VAPUR_01": "aaaabbbbccccddddeeeeffff00001111aaaabbbbccccddddeeeeffff00001111"
+          }
+          EOF
+
       - name: Veritabanı Şeması ve Başlangıç Tohumunu Başlat (reset-demo)
         env:
           DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/aktarbilet?sslmode=disable"
           JWT_SECRET: "ddo-aktarbilet-super-secret-key-2026"
           DDO_STAMP: "f85f26"
+          VALIDATOR_CREDENTIALS_FILE: "/tmp/aktarbilet-secrets/validator-credentials.json"
         run: |
           go run ./cmd/server -reset
 
@@ -58,6 +71,7 @@ jobs:
           DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/aktarbilet?sslmode=disable"
           JWT_SECRET: "ddo-aktarbilet-super-secret-key-2026"
           DDO_STAMP: "f85f26"
+          VALIDATOR_CREDENTIALS_FILE: "/tmp/aktarbilet-secrets/validator-credentials.json"
         run: |
           go test -v -race -coverprofile=coverage.out ./internal/...
           go tool cover -func=coverage.out
@@ -70,7 +84,19 @@ jobs:
           DATABASE_URL: "postgres://postgres:postgres@127.0.0.1:5432/aktarbilet?sslmode=disable"
           JWT_SECRET: "ddo-aktarbilet-super-secret-key-2026"
           DDO_STAMP: "f85f26"
-        run: go run ./cmd/verify
+          VALIDATOR_CREDENTIALS_FILE: "/tmp/aktarbilet-secrets/validator-credentials.json"
+        run: |
+          go run ./cmd/server &
+          SERVER_PID=$!
+          for i in {1..30}; do
+            if curl -s http://localhost:8080/health > /dev/null; then
+              echo "Backend sunucusu hazır!"
+              break
+            fi
+            sleep 1
+          done
+          make verify
+          kill $SERVER_PID || true
 
   frontend-build:
     name: Frontend Derleme ve Tip Kontrolü
