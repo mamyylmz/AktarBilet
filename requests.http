@@ -1,23 +1,28 @@
 ### AktarBilet REST Client Koleksiyonu (requests.http)
 ### DDO Yazılım Ekibi Şartnamesi — Bölüm 10 Elle Deneme Koleksiyonu
+### VS Code REST Client eklentisi veya IntelliJ HTTP Client ile doğrudan çalıştırılabilir.
 
 @baseUrl = http://localhost:8080
 @stamp = f85f26
 
-### 1. Sistem Sağlık Uçları
+### ============================================================================
+### 1. SİSTEM SAĞLIK VE METRİK UÇLARI (SYS-1, SYS-3, ARCH-04)
+### ============================================================================
+
+### 1.1. Genel Sağlık Kontrolü (PostgreSQL bağlantısını doğrular)
 GET {{baseUrl}}/health HTTP/1.1
 
-### 2. Zorunlu Sistem Sağlık Ucu (System Canary: GET /_hz/f85f)
+### 1.2. Zorunlu Sistem Sağlık Ucu (System Canary 4: GET /_hz/f85f)
 GET {{baseUrl}}/_hz/f85f HTTP/1.1
 
-### 3. Prometheus Metrikleri
+### 1.3. Prometheus Metrik Ucu
 GET {{baseUrl}}/metrics HTTP/1.1
 
-### ----------------------------------------------------------------------------
-### 4. Kimlik Doğrulama (Tüm Roller İçin Demo Girişleri)
-### ----------------------------------------------------------------------------
+### ============================================================================
+### 2. KİMLİK DOĞRULAMA VE OTURUM YÖNETİMİ (Tüm Roller İçin Demo Hesaplar)
+### ============================================================================
 
-### 4.1. Admin / Canary Girişi (seed.sedir@ddo-case.invalid)
+### 2.1. Admin / Canary Girişi (seed.sedir@ddo-case.invalid)
 # @name loginAdmin
 POST {{baseUrl}}/api/v1/auth/login HTTP/1.1
 Content-Type: application/json
@@ -27,7 +32,7 @@ Content-Type: application/json
   "password": "SedirPassword2026!"
 }
 
-### 4.2. Yolcu Girişi
+### 2.2. Yolcu Girişi
 # @name loginYolcu
 POST {{baseUrl}}/api/v1/auth/login HTTP/1.1
 Content-Type: application/json
@@ -37,7 +42,7 @@ Content-Type: application/json
   "password": "YolcuPassword123!"
 }
 
-### 4.3. Kontrolör Girişi
+### 2.3. Kontrolör Girişi
 # @name loginKontrolor
 POST {{baseUrl}}/api/v1/auth/login HTTP/1.1
 Content-Type: application/json
@@ -47,7 +52,17 @@ Content-Type: application/json
   "password": "KontrolorPassword123!"
 }
 
-### 4.4. Muhasebe Girişi
+### 2.4. Hat Yöneticisi Girişi
+# @name loginHatYoneticisi
+POST {{baseUrl}}/api/v1/auth/login HTTP/1.1
+Content-Type: application/json
+
+{
+  "email": "hatyoneticisi@aktarbilet.gov.tr",
+  "password": "HatYoneticisi123!"
+}
+
+### 2.5. Muhasebe Girişi
 # @name loginMuhasebe
 POST {{baseUrl}}/api/v1/auth/login HTTP/1.1
 Content-Type: application/json
@@ -57,7 +72,7 @@ Content-Type: application/json
   "password": "MuhasebePassword123!"
 }
 
-### 4.5. Operasyon Girişi
+### 2.6. Operasyon Girişi
 # @name loginOperasyon
 POST {{baseUrl}}/api/v1/auth/login HTTP/1.1
 Content-Type: application/json
@@ -67,18 +82,34 @@ Content-Type: application/json
   "password": "OperasyonPassword123!"
 }
 
-### ----------------------------------------------------------------------------
-### 5. F-1: Kart ve Bakiye Yönetimi, Dolum
-### ----------------------------------------------------------------------------
+### 2.7. Kimlik Doğrulama Bilgisi Sorgulama (GET /auth/me)
+GET {{baseUrl}}/api/v1/auth/me HTTP/1.1
+Authorization: Bearer {{loginAdmin.response.body.access_token}}
 
-### 5.1. Kart Bakiye Sorgulama
-GET {{baseUrl}}/api/v1/cards/CARD_TAM_001 HTTP/1.1
+### 2.8. Aktif Rol Değiştirme (POST /auth/switch-role)
+POST {{baseUrl}}/api/v1/auth/switch-role HTTP/1.1
+Authorization: Bearer {{loginAdmin.response.body.access_token}}
+Content-Type: application/json
 
-### 5.2. Kart Hareket Defteri (Bonus 2: Yolcu Sorgulama)
-GET {{baseUrl}}/api/v1/cards/CARD_TAM_001/ledger HTTP/1.1
+{
+  "role": "admin"
+}
 
-### 5.3. Kart Bakiye Dolumu (Idempotent)
-POST {{baseUrl}}/api/v1/cards/CARD_TAM_001/recharge HTTP/1.1
+### ============================================================================
+### 3. F-1: KART VE BAKİYE YÖNETİMİ, DOLUM (IDOR Korumalı)
+### ============================================================================
+
+### 3.1. Kart Bakiye Sorgulama (Yolcu Kendi Kartını Sorgular)
+GET {{baseUrl}}/api/v1/cards/CARD_YOLCU_001 HTTP/1.1
+Authorization: Bearer {{loginYolcu.response.body.access_token}}
+
+### 3.2. Kart Hareket Defteri (Bonus 2: Yolcu Defter Sorgulama)
+GET {{baseUrl}}/api/v1/cards/CARD_YOLCU_001/ledger HTTP/1.1
+Authorization: Bearer {{loginYolcu.response.body.access_token}}
+
+### 3.3. Karta Bakiye Yükleme (Idempotent - Kuruş Cinsinden: 100 TL = 10000 Kuruş)
+POST {{baseUrl}}/api/v1/cards/CARD_YOLCU_001/recharge HTTP/1.1
+Authorization: Bearer {{loginYolcu.response.body.access_token}}
 Content-Type: application/json
 Idempotency-Key: RECHARGE_REQ_101
 
@@ -87,119 +118,204 @@ Idempotency-Key: RECHARGE_REQ_101
   "description": "Kiosk Dolumu 100 TL"
 }
 
-### ----------------------------------------------------------------------------
-### 6. F-2 / T-1 / T-2: Validatör Olayları & Çevrimdışı Senkronizasyon
-### ----------------------------------------------------------------------------
+### ============================================================================
+### 4. F-3: HAT, DURAK VE TARİFE KATALOĞU (Katalog API)
+### ============================================================================
 
-### 6.1. Turnike Biniş Olayı (İlk Biniş - Tam Tarife: 20 TL)
+### 4.1. Tüm Hatları Listeleme
+GET {{baseUrl}}/api/v1/lines HTTP/1.1
+
+### 4.2. Yeni Hat Tanımlama (Yetkili: Hat Yöneticisi veya Admin)
+POST {{baseUrl}}/api/v1/lines HTTP/1.1
+Authorization: Bearer {{loginHatYoneticisi.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "id": "LINE_999X",
+  "name": "999X Konak - Bornova Ekspres",
+  "mode": "bus"
+}
+
+### 4.3. Tüm Durakları Listeleme
+GET {{baseUrl}}/api/v1/stations HTTP/1.1
+
+### 4.4. Ücret Tarifelerini Listeleme
+GET {{baseUrl}}/api/v1/tariffs HTTP/1.1
+
+### ============================================================================
+### 5. F-2 / T-1 / T-2: VALİDATÖR TURNİKE BİNİŞLERİ VE ÇEVRİMDISI SENKRONİZASYON
+### ============================================================================
+
+### 5.1. Turnike Tekli Biniş (HMAC-SHA256 İmzalı Cihaz İsteği)
 POST {{baseUrl}}/api/v1/validators/tap HTTP/1.1
 Content-Type: application/json
-Idempotency-Key: TAP_EVENT_001
+X-Validator-ID: VAL_500T_01
+X-Device-Signature: sample_signature_for_device_verification
+X-Device-Timestamp: 1793033904
+X-Device-Nonce: nonce_tap_demo_001
+Idempotency-Key: TAP_DEMO_001
 
 {
   "validator_id": "VAL_500T_01",
   "sequence_no": 1,
-  "card_id": "CARD_TAM_001",
+  "card_id": "CARD_YOLCU_001",
   "line_id": "LINE_500T",
   "station_id": "STAT_AYRILIK",
   "direction": 1,
-  "tapped_at": "2026-10-24T14:00:00Z"
+  "tapped_at": "2026-10-26T12:00:00Z"
 }
 
-### 6.2. 1. Aktarma (25 dk sonra farklı hatta biniş -> %50 İndirim: 10 TL)
-POST {{baseUrl}}/api/v1/validators/tap HTTP/1.1
+### 5.2. Çevrimdışı Toplu Biniş Senkronizasyonu (Batch Sync)
+POST {{baseUrl}}/api/v1/validators/batch-sync HTTP/1.1
 Content-Type: application/json
-Idempotency-Key: TAP_EVENT_002
+X-Validator-ID: VAL_500T_01
+X-Device-Signature: sample_batch_signature_for_device
+X-Device-Timestamp: 1793033904
+X-Device-Nonce: nonce_batch_demo_001
 
-{
-  "validator_id": "VAL_14ES_01",
-  "sequence_no": 2,
-  "card_id": "CARD_TAM_001",
-  "line_id": "LINE_14ES",
-  "station_id": "STAT_KADIKOY",
-  "direction": 1,
-  "tapped_at": "2026-10-24T14:25:00Z"
-}
+[
+  {
+    "idempotency_key": "BATCH_EV_001",
+    "validator_id": "VAL_500T_01",
+    "sequence_no": 10,
+    "card_id": "CARD_YOLCU_001",
+    "line_id": "LINE_500T",
+    "station_id": "STAT_AYRILIK",
+    "direction": 1,
+    "tapped_at": "2026-10-26T12:01:00Z"
+  }
+]
 
-### 6.3. Ters Yön Kuralı (Aynı hatta geri dönüş aktarma sayılmaz -> Tam Ücret)
-POST {{baseUrl}}/api/v1/validators/tap HTTP/1.1
-Content-Type: application/json
-Idempotency-Key: TAP_EVENT_003
+### ============================================================================
+### 6. F-6: SAHA DENETİMİ VE CEZA KAYITLARI (Kontrolör & Admin)
+### ============================================================================
 
-{
-  "validator_id": "VAL_14ES_01",
-  "sequence_no": 3,
-  "card_id": "CARD_TAM_001",
-  "line_id": "LINE_14ES",
-  "station_id": "STAT_AYRILIK",
-  "direction": 2,
-  "tapped_at": "2026-10-24T14:40:00Z"
-}
+### 6.1. Kesilen Cezaları Listeleme
+GET {{baseUrl}}/api/v1/penalties HTTP/1.1
+Authorization: Bearer {{loginKontrolor.response.body.access_token}}
 
-### ----------------------------------------------------------------------------
-### 7. F-3: Hat, Durak ve Tarifeler
-### ----------------------------------------------------------------------------
-
-GET {{baseUrl}}/api/v1/lines HTTP/1.1
-
-###
-GET {{baseUrl}}/api/v1/stations HTTP/1.1
-
-###
-GET {{baseUrl}}/api/v1/tariffs HTTP/1.1
-
-### ----------------------------------------------------------------------------
-### 8. F-5 / T-4: Gelir Paylaşımı ve Dönem Kapanışı
-### ----------------------------------------------------------------------------
-
-### 8.1. Dönem Kapatma
-POST {{baseUrl}}/api/v1/settlements/close HTTP/1.1
-Content-Type: application/json
-
-{
-  "period_id": "a0000000-0000-0000-0000-000000000001"
-}
-
-### 8.2. Kapanış Sonrası Storno / Düzeltme Kaydı
-POST {{baseUrl}}/api/v1/settlements/storno HTTP/1.1
-Content-Type: application/json
-
-{
-  "period_id": "a0000000-0000-0000-0000-000000000001",
-  "operator": "ozel_halk",
-  "amount_kurus": -500,
-  "reason": "Geçersiz okuma düzeltmesi"
-}
-
-### ----------------------------------------------------------------------------
-### 9. F-6: Saha Kontrol ve Ceza
-### ----------------------------------------------------------------------------
-
+### 6.2. Usulsüz Kullanım Cezası Kesme
 POST {{baseUrl}}/api/v1/penalties HTTP/1.1
+Authorization: Bearer {{loginKontrolor.response.body.access_token}}
 Content-Type: application/json
 
 {
   "card_id": "CARD_TAM_001",
-  "line_id": "LINE_500T",
-  "station_id": "STAT_AYRILIK",
   "penalty_amount_kurus": 5000,
   "reason": "kartsiz_binis",
   "notes": "Turnikeden kaçak geçiş denemesi"
 }
 
-### ----------------------------------------------------------------------------
-### 10. Bonus 1 & 3: Isı Haritası ve Tarife Simülasyonu
-### ----------------------------------------------------------------------------
+### ============================================================================
+### 7. F-5 / T-4: GELİR PAYLAŞIMI VE DÖNEM KAPANIŞI (Muhasebe & Admin)
+### ============================================================================
 
-### 10.1. Hat Bazlı Doluluk Isı Haritası (Bonus 1)
-GET {{baseUrl}}/api/v1/reports/heatmap HTTP/1.1
+### 7.1. Mutabakat Dönem ve Hakediş Listesi
+GET {{baseUrl}}/api/v1/settlements HTTP/1.1
+Authorization: Bearer {{loginMuhasebe.response.body.access_token}}
 
-### 10.2. Tarife Değişikliği Etki Simülasyonu (Bonus 3)
-POST {{baseUrl}}/api/v1/simulation/fare-impact HTTP/1.1
+### 7.2. Mutabakat Dönemini Kapatma (Idempotent Tek Yönlü Geçiş)
+POST {{baseUrl}}/api/v1/settlements/close HTTP/1.1
+Authorization: Bearer {{loginMuhasebe.response.body.access_token}}
 Content-Type: application/json
 
 {
-  "base_fare_change_pct": 15.0,
-  "student_fare_change_pct": 25.0,
-  "elasticity_factor": -0.35
+  "period_id": "a0000000-0000-0000-0000-000000000001",
+  "period_name": "2026-EKIM-DONEMI"
+}
+
+### 7.3. Kapatılmış Dönemi Gerekçeli Yeniden Açma (Yalnızca Admin)
+POST {{baseUrl}}/api/v1/settlements/reopen HTTP/1.1
+Authorization: Bearer {{loginAdmin.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "period_id": "a0000000-0000-0000-0000-000000000001",
+  "reason": "Dönem sonu denetim mutabakat düzeltmesi"
+}
+
+### 7.4. Kapanış Sonrası Storno / Düzeltme Kaydı (Idempotent)
+POST {{baseUrl}}/api/v1/settlements/storno HTTP/1.1
+Authorization: Bearer {{loginMuhasebe.response.body.access_token}}
+Content-Type: application/json
+Idempotency-Key: STORNO_DEMO_001
+
+{
+  "period_id": "a0000000-0000-0000-0000-000000000001",
+  "operator": "ozel_halk",
+  "amount_kurus": -500,
+  "reason": "Mükerrer okuma düzeltmesi"
+}
+
+### ============================================================================
+### 8. OPERASYON VE GÜVENLİK ANOMALİLERİ (Operasyon & Admin)
+### ============================================================================
+
+### 8.1. Şüpheli Biniş ve Hız Anomalilerini Listeleme
+GET {{baseUrl}}/api/v1/anomalies HTTP/1.1
+Authorization: Bearer {{loginOperasyon.response.body.access_token}}
+
+### ============================================================================
+### 9. CANLI ULAŞIM VE ESHOT ENTEGRASYONU
+### ============================================================================
+
+### 9.1. Resmî İzmir ESHOT Canlı Otobüs Konumları (Hat 800)
+GET {{baseUrl}}/api/v1/transit/live-buses?line=800 HTTP/1.1
+
+### 9.2. Canlı ESHOT Hat Listesi
+GET {{baseUrl}}/api/v1/transit/lines HTTP/1.1
+
+### ============================================================================
+### 10. HAT SEFER SIKLIĞI VE MALİYET OPTİMİZASYONU (Hat Yöneticisi & Admin)
+### ============================================================================
+
+### 10.1. Sefer Sıklığı Senaryo Simülasyonu
+POST {{baseUrl}}/api/v1/optimization/headway-scenario HTTP/1.1
+Authorization: Bearer {{loginHatYoneticisi.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "line_id": "LINE_500T",
+  "current_headway_minutes": 15,
+  "target_headway_minutes": 8,
+  "fleet_capacity_per_vehicle": 75,
+  "peak_hour": true
+}
+
+### 10.2. Optimizasyon Senaryosu Kalıcı Onayı (Onay Kaydı Oluşturur)
+POST {{baseUrl}}/api/v1/optimization/approve HTTP/1.1
+Authorization: Bearer {{loginHatYoneticisi.response.body.access_token}}
+Content-Type: application/json
+Idempotency-Key: OPT_APPROVE_500T_001
+
+{
+  "line_id": "LINE_500T",
+  "current_headway_minutes": 15,
+  "target_headway_minutes": 8,
+  "fleet_capacity": 75,
+  "vehicle_delta": 4,
+  "delta_cost_kurus": 250000,
+  "projected_net_margin_kurus": 450000,
+  "notes": "Pik saat yolcu memnuniyeti artırımı"
+}
+
+### ============================================================================
+### 11. RAPORLAMA VE BONUS ÖZELLİKLER (Isı Haritası, Kârlılık, Tarife Simülasyonu)
+### ============================================================================
+
+### 11.1. Durak Bazlı Yolcu Yoğunluk Isı Haritası (Bonus 1)
+GET {{baseUrl}}/api/v1/reports/heatmap HTTP/1.1
+
+### 11.2. Hat Bazlı Kârlılık ve Finansal Gelir/Gider Raporu
+GET {{baseUrl}}/api/v1/reports/line-financials HTTP/1.1
+Authorization: Bearer {{loginMuhasebe.response.body.access_token}}
+
+### 11.3. Tarife Değişikliği Yolcu Talebi ve Gelir Etki Simülasyonu (Bonus 3)
+POST {{baseUrl}}/api/v1/simulation/fare-impact HTTP/1.1
+Authorization: Bearer {{loginHatYoneticisi.response.body.access_token}}
+Content-Type: application/json
+
+{
+  "base_fare_kurus": 2000,
+  "transfer_fare_kurus": 1000
 }

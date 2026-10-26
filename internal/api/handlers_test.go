@@ -1179,3 +1179,154 @@ func TestAPI_OptimizationApproval_And_Financials(t *testing.T) {
 		t.Fatalf("GET /transit/live-buses 200 dönmeli, alınan: %d", wBuses.Code)
 	}
 }
+
+func TestAPI_ExtendedCoverage_Endpoints(t *testing.T) {
+	rig := setupTestRig()
+
+	// 1. SwitchRole tests
+	// 1a. Unauthorized
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/auth/switch-role", bytes.NewReader([]byte(`{"role":"kontrolor"}`)))
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("Yetkisiz switch-role 401 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 1b. Bad JSON
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/auth/switch-role", bytes.NewReader([]byte(`invalid`)))
+	req.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Geçersiz JSON 400 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 1c. Missing role
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/auth/switch-role", bytes.NewReader([]byte(`{"role":""}`)))
+	req.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Boş rol 400 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 1d. Valid switch for admin in memory
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/auth/switch-role", bytes.NewReader([]byte(`{"role":"kontrolor"}`)))
+	req.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Admin kontrolor rolüne geçebilmeli 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 1e. Unauthorized role for yolcu
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/auth/switch-role", bytes.NewReader([]byte(`{"role":"admin"}`)))
+	req.Header.Set("Authorization", "Bearer "+rig.token(rig.yolcuUser))
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("Yolcu admin rolüne geçememeli 403 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 2. ListSettlements (Muhasebe)
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/settlements", nil)
+	req.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /settlements 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 3. ReopenSettlementPeriod
+	// 3a. Invalid period name -> 400
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/settlements/reopen", bytes.NewReader([]byte(`{"period_name":"1999-OCAK"}`)))
+	req.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Geçersiz dönem 400 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 3b. Valid reopen in memory -> 200
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/settlements/reopen", bytes.NewReader([]byte(`{"period_name":"2026-EKIM"}`)))
+	req.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST /settlements/reopen 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 4. CreateLine
+	// 4a. Bad JSON
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/lines", bytes.NewReader([]byte(`invalid`)))
+	req.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Geçersiz hat JSON 400 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 4b. Missing id/name
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/lines", bytes.NewReader([]byte(`{"id":""}`)))
+	req.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("Eksik hat alanı 400 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 4c. Valid line creation in memory
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/lines", bytes.NewReader([]byte(`{"id":"LINE_999","name":"Test Hattı","mode":"bus"}`)))
+	req.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("POST /lines 201 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 5. ListStations & ListTariffs
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/stations", nil)
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /stations 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/tariffs", nil)
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /tariffs 200 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 6. GetCard and GetCardLedger error paths
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/cards/CARD_YOLCU_001", nil)
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("Yetkisiz GetCard 401 dönmeli, alınan: %d", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/api/v1/cards/CARD_YOLCU_001/ledger", nil)
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("Yetkisiz GetCardLedger 401 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 7. ProcessTap unauthenticated or missing fields
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/validators/tap", bytes.NewReader([]byte(`{}`)))
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("Cihaz imzasız ProcessTap 401 dönmeli, alınan: %d", w.Code)
+	}
+
+	// 8. BatchSyncValidators unauthenticated
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/validators/batch-sync", bytes.NewReader([]byte(`[]`)))
+	rig.router.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("Cihaz imzasız BatchSyncValidators 401 dönmeli, alınan: %d", w.Code)
+	}
+}

@@ -97,21 +97,12 @@ export default function App() {
     return {
       id: 'CARD_YOLCU_001',
       balance_kurus: initialKurus,
-      balance_tl: initialKurus / 100,
+      balance_tl: `${(initialKurus / 100).toFixed(2)} ₺`,
       card_type: 'tam',
     };
   });
 
-  const [ledger, setLedger] = useState([
-    {
-      id: '1',
-      entry_type: 'dolum',
-      amount_kurus: 50000,
-      balance_after_kurus: 50000,
-      description: 'Kiosk Başlangıç Bakiye Yüklemesi',
-      created_at: new Date(Date.now() - 3600000).toISOString(),
-    },
-  ]);
+  const [ledger, setLedger] = useState([]);
 
   const [transferTimer, setTransferTimer] = useState(0);
   const [transferLevel, setTransferLevel] = useState(0);
@@ -147,20 +138,10 @@ export default function App() {
   const [simulatingScenario, setSimulatingScenario] = useState(false);
   const [approvingScenario, setApprovingScenario] = useState(false);
 
-  // 8. Operations & Transit State
+  // 8. Operations & Transit State (Gerçek ESHOT API — Zero Fake Buses)
   const [selectedTransitLine, setSelectedTransitLine] = useState('800');
-  const [liveBuses, setLiveBuses] = useState([
-    { bus_id: '800-01', line_number: '800', latitude: 38.4521, longitude: 27.1852 },
-    { bus_id: '800-02', line_number: '800', latitude: 38.4614, longitude: 27.2015 },
-    { bus_id: '470-01', line_number: '470', latitude: 38.3891, longitude: 27.1724 },
-    { bus_id: '35-01', line_number: '35', latitude: 38.4125, longitude: 27.1384 },
-  ]);
-  const [liveTransitMeta, setLiveTransitMeta] = useState({
-    line_number: '800',
-    total_buses: 2,
-    retrieved_at: new Date().toISOString(),
-    attribution: 'İzmir Büyükşehir Belediyesi ESHOT Açık Veri',
-  });
+  const [liveBuses, setLiveBuses] = useState([]);
+  const [liveTransitMeta, setLiveTransitMeta] = useState(null);
   const [liveTransitLoading, setLiveTransitLoading] = useState(false);
 
   // Heatmap State
@@ -329,10 +310,10 @@ export default function App() {
     }
   };
 
-  // Turnstile tap action
+  // Turnstile tap action (Gerçek API Yanıtı — Sahte Başarı Bildirimi Yok)
   const handleTapTurnstile = async (lineId = 'LINE_500T', lineName = '500T') => {
     try {
-      await fetch('/api/v1/validators/tap', {
+      const res = await fetch('/api/v1/validators/tap', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -346,20 +327,27 @@ export default function App() {
           validator_id: 'VAL_500T_01',
           card_id: card.id,
           line_id: lineId,
-          station_id: 'STN_500T_01',
+          station_id: 'STAT_AYRILIK',
           sequence_no: 1,
           direction: 1,
           tapped_at: new Date().toISOString(),
         }),
-      }).catch(() => {});
-    } finally {
-      showToast(`Kartınız ${lineName} turnikesinde başarıyla okutuldu.`, 'success');
-      if (transferTimer <= 0) {
-        setTransferTimer(5400); // 90 min countdown
-        setTransferLevel(1);
+      });
+      if (res.ok) {
+        showToast(`Kartınız ${lineName} turnikesinde başarıyla okutuldu.`, 'success');
+        if (transferTimer <= 0) {
+          setTransferTimer(5400); // 90 min countdown
+          setTransferLevel(1);
+        } else {
+          setTransferLevel((prev) => prev + 1);
+        }
       } else {
-        setTransferLevel((prev) => prev + 1);
+        const errData = await res.json().catch(() => ({}));
+        const msg = errData?.error?.message || 'Cihaz doğrulaması başarısız oldu (401/403).';
+        showToast(`Turnike geçiş reddedildi (${res.status}): ${msg}`, 'error');
       }
+    } catch {
+      showToast('Turnike bağlantı hatası: Sunucuya ulaşılamadı.', 'error');
     }
   };
 

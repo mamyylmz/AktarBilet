@@ -13,10 +13,10 @@ servers:
 paths:
   /health:
     get:
-      summary: Genel sistem sağlık kontrolü
+      summary: Genel sistem sağlık kontrolü (PostgreSQL bağlantısını doğrular)
       responses:
         '200':
-          description: Sistem sağlıklı
+          description: Sistem ve veritabanı sağlıklı
           headers:
             X-DDO-Stamp:
               schema:
@@ -29,11 +29,19 @@ paths:
                 properties:
                   status:
                     type: string
-                    example: ok
+                    example: UP
+                  database:
+                    type: string
+                    example: healthy
+                  service:
+                    type: string
+                    example: AktarBilet Backend API
+        '503':
+          description: Veritabanı çevrimdışı (Fail-Closed)
 
   /_hz/f85f:
     get:
-      summary: Gizli sistem canari sağlık ucu
+      summary: Gizli sistem canari sağlık ucu (System Canary 4)
       responses:
         '200':
           description: Canari kontrolü başarılı
@@ -42,6 +50,17 @@ paths:
               schema:
                 type: string
                 example: f85f26
+
+  /metrics:
+    get:
+      summary: Prometheus metrik ucu
+      responses:
+        '200':
+          description: Prometheus metin metrikleri
+          content:
+            text/plain:
+              schema:
+                type: string
 
   /api/v1/auth/login:
     post:
@@ -80,10 +99,128 @@ paths:
                         type: string
                       role:
                         type: string
+        '401':
+          description: Hatalı e-posta veya şifre
+
+  /api/v1/auth/me:
+    get:
+      summary: Mevcut oturum açmış kullanıcı profil bilgisi
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Kullanıcı profili
+        '401':
+          description: Yetkisiz erişim
+
+  /api/v1/auth/switch-role:
+    post:
+      summary: Çok rollü kullanıcılar için aktif rol değiştirme
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_role]
+              properties:
+                target_role:
+                  type: string
+                  example: admin
+      responses:
+        '200':
+          description: Rol başarıyla değiştirildi ve yeni JWT üretildi
+        '403':
+          description: Kullanıcı bu role sahip değil
+
+  /api/v1/lines:
+    get:
+      summary: Tüm hatları listeleme
+      responses:
+        '200':
+          description: Hat listesi
+    post:
+      summary: Yeni toplu taşıma hattı tanımlama (Hat Yöneticisi & Admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, name, mode]
+              properties:
+                id:
+                  type: string
+                name:
+                  type: string
+                mode:
+                  type: string
+      responses:
+        '201':
+          description: Hat başarıyla oluşturuldu
+        '403':
+          description: Yetkisiz rol
+
+  /api/v1/stations:
+    get:
+      summary: Tüm durakları ve koordinatlarını listeleme
+      responses:
+        '200':
+          description: Durak listesi
+
+  /api/v1/tariffs:
+    get:
+      summary: Ücret tarifelerini listeleme
+      responses:
+        '200':
+          description: Tarife listesi
+
+  /api/v1/reports/heatmap:
+    get:
+      summary: İstasyon bazlı biniş yoğunluk ısı haritası verisi
+      responses:
+        '200':
+          description: Isı haritası verileri
+
+  /api/v1/reports/line-financials:
+    get:
+      summary: Hat kârlılık ve finansal gelir/gider raporu
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Hat bazlı finansal döküm
+        '403':
+          description: Yetkisiz rol
+
+  /api/v1/transit/live-buses:
+    get:
+      summary: Resmî İzmir ESHOT API canlı araç konumları ve rota bilgisi
+      parameters:
+        - name: line
+          in: query
+          required: false
+          schema:
+            type: string
+            example: '800'
+      responses:
+        '200':
+          description: Canlı otobüs konumları ve metaveri
+
+  /api/v1/transit/lines:
+    get:
+      summary: İzmir ESHOT canlı hat listesi
+      responses:
+        '200':
+          description: Aktif hatlar listesi
 
   /api/v1/cards/{cardId}:
     get:
-      summary: Kart detay ve güncel bakiye sorgulama
+      summary: Kart detay ve güncel bakiye sorgulama (IDOR korumalı)
       security:
         - BearerAuth: []
       parameters:
@@ -94,23 +231,41 @@ paths:
             type: string
       responses:
         '200':
-          description: Kart bilgileri
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  id:
-                    type: string
-                  balance_kurus:
-                    type: integer
-                    format: int64
-                  card_type:
-                    type: string
+          description: Kart bilgileri ve kuruş cinsinden bakiye
+        '403':
+          description: Yetkisiz kart erişimi (IDOR)
+        '404':
+          description: Kart bulunamadı
+
+  /api/v1/cards/{cardId}/ledger:
+    get:
+      summary: Kartın tüm finansal defter hareketleri (Append-Only)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: cardId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+        - name: before_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Defter kayıtları listesi
 
   /api/v1/cards/{cardId}/recharge:
     post:
-      summary: Karta bakiye yükleme (Kuruş cinsinden)
+      summary: Karta bakiye yükleme (Kuruş cinsinden, idempotent)
       security:
         - BearerAuth: []
       parameters:
@@ -148,7 +303,7 @@ paths:
 
   /api/v1/validators/tap:
     post:
-      summary: Turnike geçiş ve tekli validatör tap işlemi (HMAC korumalı)
+      summary: Turnike geçiş ve tekli validatör tap işlemi (HMAC-SHA256 korumalı)
       parameters:
         - name: X-Validator-ID
           in: header
@@ -205,13 +360,13 @@ paths:
         '401':
           description: Geçersiz veya eksik cihaz imzası
         '403':
-          description: Validatör cihazı iptal edilmiş
+          description: Validatör cihazı iptal edilmiş veya atama uyumsuz
         '409':
           description: Replay saldırısı tespit edildi
 
   /api/v1/validators/batch-sync:
     post:
-      summary: Çevrimdışı birikmiş validatör olaylarının toplu aktarımı
+      summary: Çevrimdışı birikmiş validatör olaylarının toplu aktarımı (Batch HMAC)
       parameters:
         - name: X-Validator-ID
           in: header
@@ -225,12 +380,12 @@ paths:
             type: string
         - name: X-Device-Timestamp
           in: header
-          required: false
+          required: true
           schema:
             type: string
         - name: X-Device-Nonce
           in: header
-          required: false
+          required: true
           schema:
             type: string
       requestBody:
@@ -265,9 +420,160 @@ paths:
         '200':
           description: Toplu paket başarıyla işlendi
         '401':
-          description: Yetkisiz çağrı
+          description: Yetkisiz çağrı veya geçersiz imza
         '403':
-          description: Validatör kimlik karmaşası veya iptal
+          description: Validatör cihazı iptal edilmiş
+        '409':
+          description: Replay tespit edildi
+
+  /api/v1/penalties:
+    get:
+      summary: Ceza kayıtlarını listeleme (Kontrolör & Admin)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Ceza kayıtları
+        '403':
+          description: Yetkisiz rol
+    post:
+      summary: Usulsüz kullanım cezası kesme (Kontrolör & Admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [card_id, reason, penalty_kurus]
+              properties:
+                card_id:
+                  type: string
+                reason:
+                  type: string
+                penalty_kurus:
+                  type: integer
+                  format: int64
+      responses:
+        '201':
+          description: Ceza başarıyla kesildi
+        '403':
+          description: Yetkisiz rol
+
+  /api/v1/settlements:
+    get:
+      summary: Operatör hakediş ve mutabakat listesi (Muhasebe & Admin)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Mutabakat dönemleri ve operatör payları
+        '403':
+          description: Yetkisiz rol
+
+  /api/v1/settlements/close:
+    post:
+      summary: Mutabakat dönemini kesinleştir ve kapat (Muhasebe & Admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [period_id]
+              properties:
+                period_id:
+                  type: string
+      responses:
+        '200':
+          description: Dönem başarıyla kapatıldı
+        '403':
+          description: Yetkisiz rol
+
+  /api/v1/settlements/reopen:
+    post:
+      summary: Kapatılmış mutabakat dönemini gerekçeli yeniden aç (Yalnızca Admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [period_id, reason]
+              properties:
+                period_id:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Dönem yeniden açıldı
+        '403':
+          description: Yetkisiz rol
+
+  /api/v1/settlements/storno:
+    post:
+      summary: Kapatılmış dönem mutabakat ters kaydı / storno (Muhasebe & Admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [settlement_id, reason]
+              properties:
+                settlement_id:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Storno kaydı oluşturuldu
+        '403':
+          description: Yetkisiz rol
+
+  /api/v1/anomalies:
+    get:
+      summary: Tespit edilen şüpheli/anormal yolculuk kayıtları (Operasyon & Admin)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Anomali kayıtları listesi
+        '403':
+          description: Yetkisiz rol
+
+  /api/v1/optimization/headway-scenario:
+    post:
+      summary: Hat sefer sıklığı ve araç filo simülasyonu (Hat Yöneticisi & Admin)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [line_id, current_headway_minutes, target_headway_minutes]
+              properties:
+                line_id:
+                  type: string
+                current_headway_minutes:
+                  type: integer
+                target_headway_minutes:
+                  type: integer
+      responses:
+        '200':
+          description: Simülasyon sonucu
+        '403':
+          description: Yetkisiz rol
 
   /api/v1/optimization/approve:
     post:
@@ -304,21 +610,32 @@ paths:
         '201':
           description: Onay kaydı başarıyla oluşturuldu
         '403':
-          description: Yetkisiz rol (yalnızca hat yöneticisi veya admin)
+          description: Yetkisiz rol
 
-  /api/v1/transit/live-buses:
-    get:
-      summary: Resmî İzmir ESHOT API canlı araç konumları
-      parameters:
-        - name: line
-          in: query
-          required: false
-          schema:
-            type: string
-            example: '800'
+  /api/v1/simulation/fare-impact:
+    post:
+      summary: Tarife değişikliği yolcu talebi ve gelir etki simülasyonu
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base_fare_kurus, transfer_fare_kurus]
+              properties:
+                base_fare_kurus:
+                  type: integer
+                  format: int64
+                transfer_fare_kurus:
+                  type: integer
+                  format: int64
       responses:
         '200':
-          description: Canlı otobüs konumları ve metaveri
+          description: Tarife simülasyon sonuçları
+        '403':
+          description: Yetkisiz rol
 
 components:
   securitySchemes:
@@ -326,4 +643,3 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-

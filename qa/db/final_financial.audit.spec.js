@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { test, expect } from '@playwright/test';
-import { apiURL, bearer, login } from '../helpers/http.js';
+import { apiURL, bearer, deviceAuthHeaders, login } from '../helpers/http.js';
 import { scalar, sql } from '../helpers/db.js';
 
 const project = process.env.QA_PROJECT_NAME || 'aktarbilet-qa';
@@ -24,25 +24,29 @@ function assertLedgerEquality(card) {
   );
 }
 
-function tap(request, token, card, sequence, key) {
+function tap(request, card, sequence, key, tappedAt = new Date().toISOString()) {
+  const body = JSON.stringify({
+    validator_id: 'VAL_500T_01', sequence_no: sequence, card_id: card,
+    line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
+    tapped_at: tappedAt
+  });
   return request.post(`${apiURL}/api/v1/validators/tap`, {
-    headers: { ...bearer(token), 'Idempotency-Key': key },
-    data: {
-      validator_id: 'VAL_500T_01', sequence_no: sequence, card_id: card,
-      line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
-      tapped_at: new Date().toISOString()
-    }
+    headers: {
+      ...deviceAuthHeaders('VAL_500T_01', sequence, body, `nonce-${key}`),
+      'Idempotency-Key': key,
+      'Content-Type': 'application/json'
+    },
+    data: body
   });
 }
 
 test.describe('final audit PostgreSQL financial workflows', () => {
   test('parallel taps on one card preserve balance and unique effects', async ({ request }) => {
-    const { token } = await login(request, 'admin');
     const card = `QA_TAPS_${Date.now()}`;
     createCard(card, 100000);
     const base = Number(`${Date.now()}`.slice(-10)) * 100;
     const responses = await Promise.all(Array.from({ length: 20 }, (_, i) =>
-      tap(request, token, card, base + i, `${card}-TAP-${i}`)
+      tap(request, card, base + i, `${card}-TAP-${i}`)
     ));
     expect(responses.every((response) => response.status() === 200)).toBe(true);
     expect(scalar(`SELECT COUNT(*) FROM jw_ledger WHERE card_id='${card}'`)).toBe('21');
@@ -58,7 +62,7 @@ test.describe('final audit PostgreSQL financial workflows', () => {
     const base = Number(`${Date.now()}`.slice(-10)) * 100;
     const operations = [];
     for (let i = 0; i < 15; i += 1) {
-      operations.push(tap(request, token, card, base + i, `${card}-TAP-${i}`));
+      operations.push(tap(request, card, base + i, `${card}-TAP-${i}`));
       operations.push(request.post(`${apiURL}/api/v1/cards/${card}/recharge`, {
         headers: { ...bearer(token), 'Idempotency-Key': `${card}-REC-${i}` },
         data: { amount_kurus: 101, description: 'concurrent final audit' }
@@ -71,13 +75,13 @@ test.describe('final audit PostgreSQL financial workflows', () => {
   });
 
   test('concurrent duplicate tap produces one event and one debit', async ({ request }) => {
-    const { token } = await login(request, 'admin');
     const card = `QA_DUP_${Date.now()}`;
     createCard(card, 10000);
     const sequence = Number(`${Date.now()}`.slice(-10)) * 100;
     const key = unique('QA-CONCURRENT-DUP');
+    const tappedAt = new Date().toISOString();
     const responses = await Promise.all(Array.from({ length: 20 }, () =>
-      tap(request, token, card, sequence, key)
+      tap(request, card, sequence, key, tappedAt)
     ));
     expect(responses.every((response) => response.status() === 200)).toBe(true);
     expect(scalar(`SELECT COUNT(*) FROM jw_validator_events WHERE idempotency_key='${key}'`)).toBe('1');
@@ -86,12 +90,11 @@ test.describe('final audit PostgreSQL financial workflows', () => {
   });
 
   test('insufficient balance under contention cannot cross the tolerance limit', async ({ request }) => {
-    const { token } = await login(request, 'admin');
     const card = `QA_LIMIT_${Date.now()}`;
     createCard(card, 0);
     const base = Number(`${Date.now()}`.slice(-10)) * 100;
     const responses = await Promise.all(Array.from({ length: 10 }, (_, i) =>
-      tap(request, token, card, base + i, `${card}-TAP-${i}`)
+      tap(request, card, base + i, `${card}-TAP-${i}`)
     ));
     expect(responses.every((response) => response.status() === 200)).toBe(true);
     expect(Number(scalar(`SELECT balance_kurus FROM jw_cards WHERE id='${card}'`))).toBeGreaterThanOrEqual(-5000);
@@ -100,7 +103,6 @@ test.describe('final audit PostgreSQL financial workflows', () => {
   });
 
   test('batch retry has one event and one financial effect per item', async ({ request }) => {
-    const { token } = await login(request, 'admin');
     const suffix = `${Date.now()}`;
     const cards = Array.from({ length: 5 }, (_, i) => `QA_BATCH_${suffix}_${i}`);
     cards.forEach((card) => createCard(card, 10000));
@@ -110,8 +112,10 @@ test.describe('final audit PostgreSQL financial workflows', () => {
       card_id: card, line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
       tapped_at: new Date(Date.now() + i).toISOString()
     }));
+    const body = JSON.stringify(payload);
+    const authHeaders = deviceAuthHeaders('VAL_500T_01', base + payload.length - 1, body, `nonce-${suffix}`);
     const send = () => request.post(`${apiURL}/api/v1/validators/batch-sync`, {
-      headers: { ...bearer(token), 'X-Validator-ID': 'VAL_500T_01' }, data: payload
+      headers: { ...authHeaders, 'Content-Type': 'application/json' }, data: body
     });
     expect((await send()).status()).toBe(200);
     expect((await send()).status()).toBe(200);

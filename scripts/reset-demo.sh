@@ -5,6 +5,16 @@ echo "==========================================================================
 echo "          AktarBilet Demo Sıfırlama Betiği (make reset-demo)                    "
 echo "================================================================================"
 
+# 1. Eğer Docker Compose backend konteyneri çalışıyorsa işlemi doğrudan konteyner içinde yap
+if docker compose ps --status running backend 2>/dev/null | grep -q backend; then
+    echo "[1/3] Docker backend konteyneri üzerinden veritabanı sıfırlanıyor..."
+    docker compose exec -T backend /app/server -reset
+    echo "[2/3] Seed kullanıcıları, hatlar, duraklar ve demo kartlar fabrika ayarlarına döndürüldü."
+    echo "[3/3] Demo ortamı sıfırlandı. make verify tekrarlanabilir duruma getirildi."
+    exit 0
+fi
+
+# 2. Yerel geliştirme ortamı (Host fallback)
 DATABASE_URL=${DATABASE_URL:-"postgres://postgres:postgres@localhost:5432/aktarbilet?sslmode=disable"}
 
 echo "[1/3] Go reset aracı ile veritabanı tabloları sıfırlanıyor..."

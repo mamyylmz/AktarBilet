@@ -53,10 +53,11 @@ func main() {
 	var pool *pgxpool.Pool
 	pool, err = pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
-		slog.Warn("Veritabanı havuzu oluşturulamadı, in-memory modda devam ediliyor", "error", err)
+		slog.Warn("PostgreSQL veritabanı havuzu oluşturulamadı, servis fail-closed (503) modunda başlatılıyor", "error", err)
 		pool = nil
 	} else if err := pool.Ping(ctx); err != nil {
-		slog.Warn("Veritabanına bağlanılamadı, in-memory modda devam ediliyor", "error", err)
+		slog.Warn("PostgreSQL veritabanına ping atılamadı, servis fail-closed (503) modunda başlatılıyor", "error", err)
+		pool.Close()
 		pool = nil
 	} else {
 		slog.Info("PostgreSQL veritabanı bağlantısı başarılı.")
@@ -179,6 +180,7 @@ func runMigrationsAndSeed(pool *pgxpool.Pool, jwtSecret string, deviceCredential
 		{"006", "migrations/006_security_and_approval_integrity.sql"},
 		{"007", "migrations/007_approval_capacity_constraint.sql"},
 		{"008", "migrations/008_multi_role_support.sql"},
+		{"009", "migrations/009_fix_batch_device_nonce.sql"},
 	}
 
 	for _, m := range migrations {

@@ -29,7 +29,7 @@ func TestSettlement_LargestRemainderKurusIntegrity(t *testing.T) {
 
 	var sumKurus domain.Kurus
 	for op, share := range shares {
-		t.Logf("Operatör: %s -> Pay: %d kuruş (%.2f TL)", op, share, share.ToTL())
+		t.Logf("Operatör: %s -> Pay: %d kuruş (%s TL)", op, share, share.FormatTL())
 		sumKurus += share
 	}
 

@@ -6,8 +6,7 @@ CREATE TABLE IF NOT EXISTS jw_device_requests (
     request_hash CHAR(64) NOT NULL,
     device_nonce VARCHAR(128) NOT NULL,
     authenticated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (validator_id, sequence_no),
-    CONSTRAINT uq_jw_device_requests_nonce UNIQUE (device_nonce)
+    PRIMARY KEY (validator_id, sequence_no)
 );
 
 ALTER TABLE jw_optimization_approvals

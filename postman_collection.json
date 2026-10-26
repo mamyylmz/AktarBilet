@@ -1,0 +1,541 @@
+{
+  "info": {
+    "name": "AktarBilet REST API Koleksiyonu",
+    "_postman_id": "f85f2600-0000-4000-8000-000000000001",
+    "description": "AktarBilet Şehir İçi Toplu Taşıma Bilet ve Ücretlendirme Sistemi REST API Koleksiyonu. Tüm demo hesaplar ve çalışma zamanı uç noktaları yapılandırılmıştır.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080", "type": "string" },
+    { "key": "adminToken", "value": "", "type": "string" },
+    { "key": "yolcuToken", "value": "", "type": "string" },
+    { "key": "kontrolorToken", "value": "", "type": "string" },
+    { "key": "hatYoneticisiToken", "value": "", "type": "string" },
+    { "key": "muhasebeToken", "value": "", "type": "string" },
+    { "key": "operasyonToken", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "1. Sistem & Sağlık",
+      "item": [
+        {
+          "name": "Genel Sağlık Kontrolü",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "Gizli Sistem Sağlık Ucu (Canary 4)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/_hz/f85f", "host": ["{{baseUrl}}"], "path": ["_hz", "f85f"] }
+          }
+        },
+        {
+          "name": "Prometheus Metrikleri",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/metrics", "host": ["{{baseUrl}}"], "path": ["metrics"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Kimlik & Oturum (Demo Hesaplar)",
+      "item": [
+        {
+          "name": "Giriş - Admin (Canary: seed.sedir@ddo-case.invalid)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.access_token) pm.collectionVariables.set('adminToken', res.access_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"seed.sedir@ddo-case.invalid\",\n  \"password\": \"SedirPassword2026!\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "login"] }
+          }
+        },
+        {
+          "name": "Giriş - Yolcu (yolcu@aktarbilet.gov.tr)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.access_token) pm.collectionVariables.set('yolcuToken', res.access_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"yolcu@aktarbilet.gov.tr\",\n  \"password\": \"YolcuPassword123!\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "login"] }
+          }
+        },
+        {
+          "name": "Giriş - Kontrolör (kontrolor@aktarbilet.gov.tr)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.access_token) pm.collectionVariables.set('kontrolorToken', res.access_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"kontrolor@aktarbilet.gov.tr\",\n  \"password\": \"KontrolorPassword123!\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "login"] }
+          }
+        },
+        {
+          "name": "Giriş - Hat Yöneticisi (hatyoneticisi@aktarbilet.gov.tr)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.access_token) pm.collectionVariables.set('hatYoneticisiToken', res.access_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"hatyoneticisi@aktarbilet.gov.tr\",\n  \"password\": \"HatYoneticisi123!\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "login"] }
+          }
+        },
+        {
+          "name": "Giriş - Muhasebe (muhasebe@aktarbilet.gov.tr)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.access_token) pm.collectionVariables.set('muhasebeToken', res.access_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"muhasebe@aktarbilet.gov.tr\",\n  \"password\": \"MuhasebePassword123!\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "login"] }
+          }
+        },
+        {
+          "name": "Giriş - Operasyon (operasyon@aktarbilet.gov.tr)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "if (res.access_token) pm.collectionVariables.set('operasyonToken', res.access_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"operasyon@aktarbilet.gov.tr\",\n  \"password\": \"OperasyonPassword123!\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "login"] }
+          }
+        },
+        {
+          "name": "Mevcut Kullanıcı Profili (GET /auth/me)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/me", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "me"] }
+          }
+        },
+        {
+          "name": "Aktif Rol Değiştir (POST /auth/switch-role)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"admin\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/switch-role", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "switch-role"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. F-1: Kart & Bakiye Yönetimi",
+      "item": [
+        {
+          "name": "Kart Sorgula (IDOR korumalı)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{yolcuToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/cards/CARD_YOLCU_001", "host": ["{{baseUrl}}"], "path": ["api", "v1", "cards", "CARD_YOLCU_001"] }
+          }
+        },
+        {
+          "name": "Kart Defter Hareketleri (Bonus 2)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{yolcuToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/cards/CARD_YOLCU_001/ledger", "host": ["{{baseUrl}}"], "path": ["api", "v1", "cards", "CARD_YOLCU_001", "ledger"] }
+          }
+        },
+        {
+          "name": "Karta Bakiye Yükle (Idempotent)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{yolcuToken}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "POSTMAN_RECHARGE_001" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount_kurus\": 10000,\n  \"description\": \"Postman Dolumu 100 TL\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/cards/CARD_YOLCU_001/recharge", "host": ["{{baseUrl}}"], "path": ["api", "v1", "cards", "CARD_YOLCU_001", "recharge"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. F-3: Hat, Durak ve Tarife Kataloğu",
+      "item": [
+        {
+          "name": "Hatları Listele",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/lines", "host": ["{{baseUrl}}"], "path": ["api", "v1", "lines"] }
+          }
+        },
+        {
+          "name": "Yeni Hat Oluştur (Hat Yöneticisi)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hatYoneticisiToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"LINE_888E\",\n  \"name\": \"888E Karşıyaka - Bornova Hızlı\",\n  \"mode\": \"bus\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/lines", "host": ["{{baseUrl}}"], "path": ["api", "v1", "lines"] }
+          }
+        },
+        {
+          "name": "Durakları Listele",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/stations", "host": ["{{baseUrl}}"], "path": ["api", "v1", "stations"] }
+          }
+        },
+        {
+          "name": "Tarifeleri Listele",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/tariffs", "host": ["{{baseUrl}}"], "path": ["api", "v1", "tariffs"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. F-2 / T-1 / T-2: Validatör Turnike Binişleri",
+      "item": [
+        {
+          "name": "Turnike Biniş Olayı (HMAC İmzalı)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Validator-ID", "value": "VAL_500T_01" },
+              { "key": "X-Device-Signature", "value": "device_hmac_signature" },
+              { "key": "X-Device-Timestamp", "value": "1793033904" },
+              { "key": "X-Device-Nonce", "value": "nonce_pm_tap_01" },
+              { "key": "Idempotency-Key", "value": "PM_TAP_001" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"validator_id\": \"VAL_500T_01\",\n  \"sequence_no\": 1,\n  \"card_id\": \"CARD_YOLCU_001\",\n  \"line_id\": \"LINE_500T\",\n  \"station_id\": \"STAT_AYRILIK\",\n  \"direction\": 1,\n  \"tapped_at\": \"2026-10-26T12:00:00Z\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/validators/tap", "host": ["{{baseUrl}}"], "path": ["api", "v1", "validators", "tap"] }
+          }
+        },
+        {
+          "name": "Çevrimdışı Toplu Paket Senkronizasyonu (Batch Sync)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Validator-ID", "value": "VAL_500T_01" },
+              { "key": "X-Device-Signature", "value": "device_batch_hmac_signature" },
+              { "key": "X-Device-Timestamp", "value": "1793033904" },
+              { "key": "X-Device-Nonce", "value": "nonce_pm_batch_01" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"idempotency_key\": \"PM_BATCH_EV_01\",\n    \"validator_id\": \"VAL_500T_01\",\n    \"sequence_no\": 10,\n    \"card_id\": \"CARD_YOLCU_001\",\n    \"line_id\": \"LINE_500T\",\n    \"station_id\": \"STAT_AYRILIK\",\n    \"direction\": 1,\n    \"tapped_at\": \"2026-10-26T12:01:00Z\"\n  }\n]"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/validators/batch-sync", "host": ["{{baseUrl}}"], "path": ["api", "v1", "validators", "batch-sync"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. F-6: Saha Denetimi ve Cezalar",
+      "item": [
+        {
+          "name": "Ceza Tutanaklarını Listele (Kontrolör)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{kontrolorToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/penalties", "host": ["{{baseUrl}}"], "path": ["api", "v1", "penalties"] }
+          }
+        },
+        {
+          "name": "Usulsüz Kullanım Cezası Kes (Kontrolör)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{kontrolorToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"card_id\": \"CARD_TAM_001\",\n  \"penalty_amount_kurus\": 5000,\n  \"reason\": \"kartsiz_binis\",\n  \"notes\": \"Turnikeden kaçak geçiş tespiti\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/penalties", "host": ["{{baseUrl}}"], "path": ["api", "v1", "penalties"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. F-5 / T-4: Gelir Paylaşımı ve Mutabakat",
+      "item": [
+        {
+          "name": "Mutabakat Dönemlerini Listele (Muhasebe)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{muhasebeToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/settlements", "host": ["{{baseUrl}}"], "path": ["api", "v1", "settlements"] }
+          }
+        },
+        {
+          "name": "Dönem Kapat (Muhasebe)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{muhasebeToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"period_id\": \"a0000000-0000-0000-0000-000000000001\",\n  \"period_name\": \"2026-EKIM-POSTMAN\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/settlements/close", "host": ["{{baseUrl}}"], "path": ["api", "v1", "settlements", "close"] }
+          }
+        },
+        {
+          "name": "Kapatılmış Dönemi Yeniden Aç (Yalnızca Admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"period_id\": \"a0000000-0000-0000-0000-000000000001\",\n  \"reason\": \"Denetim amaçlı düzeltme\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/settlements/reopen", "host": ["{{baseUrl}}"], "path": ["api", "v1", "settlements", "reopen"] }
+          }
+        },
+        {
+          "name": "Storno / Ters Kayıt (Muhasebe)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{muhasebeToken}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "PM_STORNO_001" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"period_id\": \"a0000000-0000-0000-0000-000000000001\",\n  \"operator\": \"ozel_halk\",\n  \"amount_kurus\": -500,\n  \"reason\": \"Mükerrer okuma düzeltmesi\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/settlements/storno", "host": ["{{baseUrl}}"], "path": ["api", "v1", "settlements", "storno"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Operasyon & Güvenlik Anomalileri",
+      "item": [
+        {
+          "name": "Anomalileri Listele (Operasyon)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{operasyonToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/anomalies", "host": ["{{baseUrl}}"], "path": ["api", "v1", "anomalies"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. Canlı Ulaşım & ESHOT",
+      "item": [
+        {
+          "name": "Canlı Otobüs Konumları (Hat 800)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/transit/live-buses?line=800",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "transit", "live-buses"],
+              "query": [{ "key": "line", "value": "800" }]
+            }
+          }
+        },
+        {
+          "name": "Canlı Hat Listesi",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/transit/lines", "host": ["{{baseUrl}}"], "path": ["api", "v1", "transit", "lines"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "10. Hat Optimizasyonu (Hat Yöneticisi)",
+      "item": [
+        {
+          "name": "Sefer Sıklığı Simülasyonu",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hatYoneticisiToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"line_id\": \"LINE_500T\",\n  \"current_headway_minutes\": 15,\n  \"target_headway_minutes\": 8,\n  \"fleet_capacity_per_vehicle\": 75,\n  \"peak_hour\": true\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/optimization/headway-scenario", "host": ["{{baseUrl}}"], "path": ["api", "v1", "optimization", "headway-scenario"] }
+          }
+        },
+        {
+          "name": "Optimizasyon Onayla ve Kaydet",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hatYoneticisiToken}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Idempotency-Key", "value": "PM_OPT_APP_001" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"line_id\": \"LINE_500T\",\n  \"current_headway_minutes\": 15,\n  \"target_headway_minutes\": 8,\n  \"fleet_capacity\": 75,\n  \"vehicle_delta\": 4,\n  \"delta_cost_kurus\": 250000,\n  \"projected_net_margin_kurus\": 450000,\n  \"notes\": \"Pik saat sıklık artırımı\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/optimization/approve", "host": ["{{baseUrl}}"], "path": ["api", "v1", "optimization", "approve"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "11. Raporlama ve Bonuslar",
+      "item": [
+        {
+          "name": "Biniş Yoğunluk Isı Haritası (Bonus 1)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/reports/heatmap", "host": ["{{baseUrl}}"], "path": ["api", "v1", "reports", "heatmap"] }
+          }
+        },
+        {
+          "name": "Hat Bazlı Finansal Gelir/Gider Raporu",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{muhasebeToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/reports/line-financials", "host": ["{{baseUrl}}"], "path": ["api", "v1", "reports", "line-financials"] }
+          }
+        },
+        {
+          "name": "Tarife Değişikliği Etki Simülasyonu (Bonus 3)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{hatYoneticisiToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"base_fare_kurus\": 2000,\n  \"transfer_fare_kurus\": 1000\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/simulation/fare-impact", "host": ["{{baseUrl}}"], "path": ["api", "v1", "simulation", "fare-impact"] }
+          }
+        }
+      ]
+    }
+  ]
+}

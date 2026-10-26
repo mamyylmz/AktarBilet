@@ -5,15 +5,19 @@ import (
 )
 
 func TestDomain_CurrencyConversions(t *testing.T) {
-	tl := 25.50
-	kurus := TLToKurus(tl)
+	kurus := Kurus(2550)
 	if kurus != 2550 {
-		t.Fatalf("TL'den kuruşa dönüşüm hatalı: beklenen 2550, bulunan %d", kurus)
+		t.Fatalf("Kuruş değeri hatalı: beklenen 2550, bulunan %d", kurus)
 	}
 
-	convertedTL := kurus.ToTL()
-	if convertedTL != 25.50 {
-		t.Fatalf("Kuruştan TL'ye dönüşüm hatalı: beklenen 25.50, bulunan %.2f", convertedTL)
+	formatted := kurus.FormatTL()
+	if formatted != "25.50" {
+		t.Fatalf("Kuruştan TL'ye biçimlendirme hatalı: beklenen '25.50', bulunan '%s'", formatted)
+	}
+
+	negativeKurus := Kurus(-500)
+	if negativeKurus.FormatTL() != "-5.00" {
+		t.Fatalf("Negatif kuruş biçimlendirme hatalı: beklenen '-5.00', bulunan '%s'", negativeKurus.FormatTL())
 	}
 }
 

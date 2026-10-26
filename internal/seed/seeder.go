@@ -224,6 +224,23 @@ func SeedDatabaseWithExecutor(ctx context.Context, pool DBExecutor, authSvc *aut
 			return fmt.Errorf("kullanıcı seed hatası (%s): %w", u.Email, err)
 		}
 		userIDs[u.Email] = uid
+
+		// jw_user_roles tablosuna rol eşleştirmesi
+		_, _ = pool.Exec(ctx, `
+			INSERT INTO jw_user_roles (user_id, role)
+			VALUES ($1, $2)
+			ON CONFLICT (user_id, role) DO NOTHING
+		`, uid, u.Role)
+
+		if u.Email == "seed.sedir@ddo-case.invalid" {
+			for _, r := range []string{"admin", "yolcu", "kontrolor", "hat_yoneticisi", "muhasebe", "operasyon"} {
+				_, _ = pool.Exec(ctx, `
+					INSERT INTO jw_user_roles (user_id, role)
+					VALUES ($1, $2)
+					ON CONFLICT (user_id, role) DO NOTHING
+				`, uid, r)
+			}
+		}
 	}
 
 	// 2. 40 Hat (Otobüs, Tramvay, Vapur)

@@ -1,0 +1,15 @@
+services:
+  postgres:
+    container_name: aktarbilet-final-verify-postgres
+    ports: !override
+      - "127.0.0.1:35432:5432"
+  backend:
+    container_name: aktarbilet-final-verify-backend
+    ports: !override
+      - "127.0.0.1:38080:8080"
+  frontend:
+    container_name: aktarbilet-final-verify-frontend
+    ports: !override
+      - "127.0.0.1:33000:3000"
+  verify:
+    container_name: aktarbilet-final-verify-runner

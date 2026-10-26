@@ -1,20 +1,24 @@
 package domain
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-// Currency is in Kuruş (1 TL = 100 kuruş). No float!
+// Currency is strictly in Kuruş (1 TL = 100 kuruş). Zero float!
 type Kurus int64
 
-func TLToKurus(tl float64) Kurus {
-	return Kurus(tl * 100)
-}
-
-func (k Kurus) ToTL() float64 {
-	return float64(k) / 100.0
+// FormatTL formats Kurus to human-readable Turkish Lira string using integer arithmetic (e.g. 2550 -> "25.50").
+func (k Kurus) FormatTL() string {
+	sign := ""
+	val := int64(k)
+	if val < 0 {
+		sign = "-"
+		val = -val
+	}
+	return fmt.Sprintf("%s%d.%02d", sign, val/100, val%100)
 }
 
 type UserRole string
