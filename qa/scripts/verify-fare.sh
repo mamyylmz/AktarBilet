@@ -14,6 +14,20 @@ TOTAL_TESTS=12
 # Sonuçları saklayacağımız dizi
 declare -A RESULTS
 declare -A NOTES
+declare -A NAMES
+
+NAMES["T1-01"]="İlk biniş ve kart türleri (Tam/Öğrenci/Yaşlı/Ücretsiz)"
+NAMES["T1-02"]="90 dk aktarma penceresi sınırları (T0..T0+90)"
+NAMES["T1-03"]="En fazla iki indirimli aktarma (1., 2. aktarma)"
+NAMES["T1-04"]="Aynı hatta ters yön kuralı (aktarma engeli)"
+NAMES["T1-05"]="Gece tarifesi ve Timezone tutarlılığı (TRT/UTC)"
+NAMES["T1-06"]="Öğrenci günlük limiti kuralı"
+NAMES["T1-07"]="Aylık abonman tavanı (Fare Capping)"
+NAMES["T1-08"]="Sırasız 3 olay uzlaşması (PostgreSQL / Core-04)"
+NAMES["T1-09"]="Çoklu kural etkileşimleri (Gece + Aktarma + Öğrenci)"
+NAMES["T1-10"]="Integer kuruş para hassasiyeti (Float yasağı)"
+NAMES["T1-11"]="Defter bütünlüğü & Eşzamanlı binişler (10 paralel tap)"
+NAMES["T1-12"]="Mükerrer ve Idempotency koruması"
 
 run_test() {
     local id="$1"
@@ -68,15 +82,36 @@ echo "==========================================================================
 printf "%-7s | %-44s | %-8s | %s\n" "KOD" "GÖREV / ÖZELLİK" "DURUM" "NOT / BULGU"
 echo "--------------------------------------------------------------------------------"
 
+ARTIFACTS_DIR="qa/artifacts/t1-fare-engine"
+mkdir -p "$ARTIFACTS_DIR"
+SUMMARY_FILE="$ARTIFACTS_DIR/t1_execution_summary.txt"
+
+{
+  echo "================================================================================"
+  echo "                      T-1 ÜCRET MOTORU DOĞRULAMA TABLOSU                        "
+  echo "================================================================================"
+  printf "%-7s | %-52s | %-8s | %s\n" "KOD" "GÖREV / ÖZELLİK" "DURUM" "NOT / BULGU"
+  echo "--------------------------------------------------------------------------------"
+  for id in T1-01 T1-02 T1-03 T1-04 T1-05 T1-06 T1-07 T1-08 T1-09 T1-10 T1-11 T1-12; do
+      status="${RESULTS[$id]:-NOT_RUN}"
+      note="${NOTES[$id]:-}"
+      name="${NAMES[$id]:-$id}"
+      printf "%-7s | %-52s | %-8s | %s\n" "$id" "$name" "$status" "$note"
+  done
+  echo "================================================================================"
+  echo "TOPLAM: $TOTAL_TESTS | GEÇEN: $((TOTAL_TESTS - FAIL_COUNT)) | BAŞARISIZ: $FAIL_COUNT"
+} > "$SUMMARY_FILE"
+
 for id in T1-01 T1-02 T1-03 T1-04 T1-05 T1-06 T1-07 T1-08 T1-09 T1-10 T1-11 T1-12; do
     status="${RESULTS[$id]:-NOT_RUN}"
     note="${NOTES[$id]:-}"
+    name="${NAMES[$id]:-$id}"
     if [ "$status" == "PASS" ]; then
         status_color="\033[32mPASS\033[0m"
     else
         status_color="\033[31mFAIL\033[0m"
     fi
-    printf "%-7s | %-44s | %-17b | %s\n" "$id" "$(eval echo \$name_$id 2>/dev/null || echo "$id Kontrolü")" "$status_color" "$note"
+    printf "%-7s | %-52s | %-17b | %s\n" "$id" "$name" "$status_color" "$note"
 done
 echo "================================================================================"
 

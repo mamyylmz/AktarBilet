@@ -63,6 +63,11 @@ export default function App() {
     return null;
   });
 
+  // Central active token getter to prevent stale role tokens from intercepting authenticated requests
+  const getActiveToken = () => {
+    return authToken || (typeof window !== 'undefined' ? localStorage.getItem('auth_token') || '' : '');
+  };
+
   // 3. Navigation State (Anonymous user defaults to public 'home')
   const [activeRole, setActiveRoleState] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -205,7 +210,7 @@ export default function App() {
   const fetchLineFinancials = async () => {
     setLoadingLineFinancials(true);
     try {
-      const token = localStorage.getItem('auth_token_hat_yoneticisi') || authToken;
+      const token = getActiveToken();
       const res = await api.getLineFinancials(token);
       setLineFinancials(Array.isArray(res) ? res : []);
     } catch {
@@ -219,7 +224,7 @@ export default function App() {
   const fetchSettlements = async () => {
     setLoadingSettlements(true);
     try {
-      const token = localStorage.getItem('auth_token_muhasebe') || authToken;
+      const token = getActiveToken();
       const res = await api.getSettlements(token);
       if (res) {
         setSettlementData(res);
@@ -356,7 +361,7 @@ export default function App() {
     setQueryCardLoading(true);
     setQueryCardError(null);
     try {
-      const token = localStorage.getItem('auth_token_kontrolor') || authToken;
+      const token = getActiveToken();
       const res = await api.getCard(cardId, token);
       setQueriedCard(res);
       showToast(`Kart başarıyla doğrulandı: ${cardId}`, 'success');
@@ -373,10 +378,7 @@ export default function App() {
   const handleCreatePenalty = async (cardId = 'CARD_TAM_001', amountKurus = 20000, reason = 'kartsiz_binis') => {
     setPenaltyLoading(true);
     try {
-      const token =
-        localStorage.getItem('auth_token_kontrolor') ||
-        localStorage.getItem('auth_token_admin') ||
-        authToken;
+      const token = getActiveToken();
       const headers = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -416,7 +418,7 @@ export default function App() {
   const handleSimulateScenario = async (params) => {
     setSimulatingScenario(true);
     try {
-      const token = localStorage.getItem('auth_token_hat_yoneticisi') || authToken;
+      const token = getActiveToken();
       const res = await api.simulateHeadway(params, token);
       setOptimizationResult(res);
       showToast('Headway optimizasyon simülasyonu tamamlandı.', 'success');
@@ -431,8 +433,9 @@ export default function App() {
   const handleApproveScenario = async (params) => {
     setApprovingScenario(true);
     try {
-      const token = localStorage.getItem('auth_token_hat_yoneticisi') || authToken;
-      const res = await api.approveOptimization(params, token);
+      const token = getActiveToken();
+      const idempotencyKey = `OPT_${params?.line_id || 'LINE'}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      await api.approveOptimization(params, token, idempotencyKey);
       showToast('Optimizasyon kararı başarıyla onaylandı ve mühürlendi.', 'success');
       setOptimizationResult(null);
       fetchLineFinancials();
@@ -446,14 +449,11 @@ export default function App() {
   // Accounting: Settlement Close action (Section 11)
   const handleCloseSettlement = async () => {
     try {
-      const token =
-        localStorage.getItem('auth_token_muhasebe') ||
-        localStorage.getItem('auth_token_admin') ||
-        authToken;
+      const token = getActiveToken();
       const headers = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      await fetch('/api/v1/settlements/close', {
+      const res = await fetch('/api/v1/settlements/close', {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -461,10 +461,16 @@ export default function App() {
           period_name: '2026-EKIM',
         }),
       });
-      setIsPeriodClosed(true);
-      localStorage.setItem('settlement_period_closed', 'true');
-      showToast('Ekim 2026 Gelir Paylaşım Dönemi Başarıyla Kapatıldı.', 'success');
-      fetchSettlements();
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        setIsPeriodClosed(true);
+        localStorage.setItem('settlement_period_closed', 'true');
+        showToast('Ekim 2026 Gelir Paylaşım Dönemi Başarıyla Kapatıldı.', 'success');
+        fetchSettlements();
+      } else {
+        const errorMsg = data?.error?.message || data?.message || 'Dönem kapatma başarısız oldu.';
+        showToast(`Dönem kapatma hatası: ${errorMsg}`, 'error');
+      }
     } catch {
       showToast('Dönem kapatma isteği başarısız oldu.', 'error');
     }
@@ -473,11 +479,8 @@ export default function App() {
   // Accounting: Reopen 2026-EKIM Period action (Section 11.4)
   const handleReopenPeriod = async (periodName = '2026-EKIM', reason = 'Yetkili denetim yeniden açma') => {
     try {
-      const token =
-        localStorage.getItem('auth_token_muhasebe') ||
-        localStorage.getItem('auth_token_admin') ||
-        authToken;
-      const res = await api.reopenSettlementPeriod(periodName, reason, token);
+      const token = getActiveToken();
+      await api.reopenSettlementPeriod(periodName, reason, token);
       setIsPeriodClosed(false);
       localStorage.setItem('settlement_period_closed', 'false');
       showToast('2026-EKIM Dönemi başarıyla tekrar açıldı.', 'success');
@@ -490,13 +493,11 @@ export default function App() {
   // Accounting: Storno correction action (Section 11.5)
   const handleStorno = async (referenceId = 'REF_REC_500T_001', reason = 'Hak ediş storno düzeltme kaydı', amountKurus = -25000) => {
     try {
-      const token =
-        localStorage.getItem('auth_token_muhasebe') ||
-        localStorage.getItem('auth_token_admin') ||
-        authToken;
+      const token = getActiveToken();
+      const idempotencyKey = `STORNO_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
       const headers = {
         'Content-Type': 'application/json',
-        'Idempotency-Key': `STORNO_${Date.now()}`,
+        'Idempotency-Key': idempotencyKey,
       };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -508,14 +509,18 @@ export default function App() {
           operator: 'ozel_halk',
           amount_kurus: amountKurus,
           reason: reason,
+          reference_id: referenceId,
         }),
       });
+
+      const data = await res.json().catch(() => null);
 
       if (res.ok) {
         showToast('Kapanış Sonrası Storno (Ters Kayıt) Düzeltmesi Eklendi.', 'success');
         fetchSettlements();
       } else {
-        showToast('Storno kaydı reddedildi.', 'error');
+        const errorMsg = data?.error?.message || data?.message || 'Storno kaydı reddedildi.';
+        showToast(`Storno hatası: ${errorMsg}`, 'error');
       }
     } catch {
       showToast('Storno servisine ulaşılamadı.', 'error');
@@ -570,8 +575,13 @@ export default function App() {
     setCurrentUser(null);
     if (typeof window !== 'undefined') {
       localStorage.removeItem('auth_token');
-      localStorage.removeItem('auth_token_yolcu');
       localStorage.removeItem('auth_user');
+      localStorage.removeItem('auth_token_yolcu');
+      localStorage.removeItem('auth_token_kontrolor');
+      localStorage.removeItem('auth_token_hat_yoneticisi');
+      localStorage.removeItem('auth_token_muhasebe');
+      localStorage.removeItem('auth_token_operasyon');
+      localStorage.removeItem('auth_token_admin');
       localStorage.setItem('logged_out', 'true');
     }
     setActiveRole('home');

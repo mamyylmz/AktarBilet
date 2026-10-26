@@ -108,6 +108,12 @@ func DefaultSeedLines() []domain.Line {
 		{ID: "LINE_250", Name: "250 Sabiha Gökçen - İzmit Otogar", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
 		{ID: "LINE_500ES", Name: "500ES Tuzla - Esenler Otogar", Mode: domain.ModeBus, Operator: "ozel_halk", IsActive: true},
 		{ID: "LINE_E10", Name: "E-10 Sabiha Gökçen Havalimanı - Kadıköy", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
+		{ID: "LINE_800", Name: "800 Menemen Aktarma - Bornova Metro (ESHOT)", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
+		{ID: "LINE_470", Name: "470 Tınaztepe - Lozan Meydanı (ESHOT)", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
+		{ID: "LINE_35", Name: "35 Ballıkuyu - Konak (ESHOT)", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
+		{ID: "LINE_5", Name: "5 Narlıdere - Üçkuyular İskele (ESHOT)", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
+		{ID: "LINE_253", Name: "253 Halkapınar Metro - Konak (ESHOT)", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
+		{ID: "LINE_680", Name: "680 Bozyaka - Konak (ESHOT)", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
 	}
 }
 
@@ -379,6 +385,21 @@ func SeedDatabaseWithExecutor(ctx context.Context, pool DBExecutor, authSvc *aut
 		} else {
 			slog.Info("200.000 kart başarıyla oluşturuldu.")
 		}
+	}
+
+	// 7. Gelir Paylaşımı Dönemi (2026-EKIM Kapanmış Başlangıç Dönemi — T-4 Storno ve Reopen için)
+	_, err = pool.Exec(ctx, `
+		INSERT INTO jw_settlement_periods (
+			id, period_name, start_date, end_date, is_closed, closed_at,
+			total_revenue_kurus, belediye_share_kurus, ozel_halk_share_kurus, created_at
+		) VALUES (
+			'00000000-0000-0000-0000-000000000001', '2026-EKIM',
+			NOW() - INTERVAL '30 days', NOW(), true, NOW(),
+			146860000, 85160000, 36900000, NOW()
+		) ON CONFLICT (id) DO NOTHING
+	`)
+	if err != nil {
+		slog.Warn("2026-EKIM settlement period seed uyarısı", "error", err)
 	}
 
 	slog.Info("Otomatik seed başarıyla tamamlandı.")

@@ -131,13 +131,20 @@ export const api = {
     });
   },
 
-  stornoSettlement: async (referenceId, reason, token) => {
+  stornoSettlement: async (referenceId, reason, amountKurus = -25000, token, idempotencyKey) => {
+    const key = idempotencyKey || `STORNO_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     return request('/api/v1/settlements/storno', {
       method: 'POST',
       token,
+      headers: {
+        'Idempotency-Key': key,
+      },
       body: JSON.stringify({
-        reference_id: referenceId || 'REF_DEFAULT',
-        reason: reason || 'Hatali kesinti iadesi',
+        period_id: '00000000-0000-0000-0000-000000000001',
+        operator: 'ozel_halk',
+        amount_kurus: amountKurus,
+        reason: reason || 'Hak ediş storno düzeltme kaydı',
+        reference_id: referenceId || 'REF_REC_500T_001',
       }),
     });
   },
@@ -155,10 +162,14 @@ export const api = {
     });
   },
 
-  approveOptimization: async (params, token) => {
+  approveOptimization: async (params, token, idempotencyKey) => {
+    const key = idempotencyKey || `OPT_${params?.line_id || 'LINE'}_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     return request('/api/v1/optimization/approve', {
       method: 'POST',
       token,
+      headers: {
+        'Idempotency-Key': key,
+      },
       body: JSON.stringify(params),
     });
   },

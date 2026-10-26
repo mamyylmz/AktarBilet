@@ -312,6 +312,14 @@ func TestAPI_StaticCatalogEndpoints(t *testing.T) {
 		t.Fatalf("GET /lines 200 dönmeli, alınan: %d", wLines.Code)
 	}
 
+	var lines []domain.Line
+	if err := json.Unmarshal(wLines.Body.Bytes(), &lines); err != nil {
+		t.Fatalf("GET /lines JSON parse hatası: %v", err)
+	}
+	if len(lines) < 40 {
+		t.Fatalf("GET /lines en az 40 geçerli hat dönmeli, bulunan: %d", len(lines))
+	}
+
 	// GET /stations
 	reqStations := httptest.NewRequest("GET", "/api/v1/stations", nil)
 	wStations := httptest.NewRecorder()
@@ -1142,6 +1150,15 @@ func TestAPI_OptimizationApproval_And_Financials(t *testing.T) {
 	rig.router.ServeHTTP(wApprAdmin, reqApprAdmin)
 	if wApprAdmin.Code != http.StatusServiceUnavailable {
 		t.Fatalf("PostgreSQL olmadan admin onayı 503 dönmeli, alınan: %d", wApprAdmin.Code)
+	}
+
+	// Admin role without Idempotency-Key -> 400 IDEMPOTENCY_KEY_REQUIRED
+	wNoIdemp := httptest.NewRecorder()
+	reqNoIdemp := httptest.NewRequest("POST", "/api/v1/optimization/approve", bytes.NewReader(apprBody))
+	reqNoIdemp.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	rig.router.ServeHTTP(wNoIdemp, reqNoIdemp)
+	if wNoIdemp.Code != http.StatusBadRequest {
+		t.Fatalf("Idempotency-Key olmadan onay 400 dönmeli, alınan: %d", wNoIdemp.Code)
 	}
 
 	// 4. Invalid optimization requests (missing line_id or invalid JSON)

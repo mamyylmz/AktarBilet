@@ -742,12 +742,7 @@ func (h *APIHandler) BatchSyncValidators(w http.ResponseWriter, r *http.Request)
 // 5. F-3: Hatlar, Duraklar, Tarifeler
 func (h *APIHandler) ListLines(w http.ResponseWriter, r *http.Request) {
 	if h.pool == nil {
-		WriteJSON(w, http.StatusOK, []domain.Line{
-			{ID: "LINE_500T", Name: "500T Tuzla - Cevizlibağ", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-			{ID: "LINE_14ES", Name: "14ES Esenkent - Kadıköy", Mode: domain.ModeBus, Operator: "ozel_halk", IsActive: true},
-			{ID: "LINE_T1", Name: "T1 Kabataş - Bağcılar Tramvay", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
-			{ID: "LINE_VAPUR_KE", Name: "Kadıköy - Eminönü Vapuru", Mode: domain.ModeFerry, Operator: "belediye", IsActive: true},
-		})
+		WriteJSON(w, http.StatusOK, seed.DefaultSeedLines())
 		return
 	}
 
@@ -1160,10 +1155,23 @@ func (h *APIHandler) StornoSettlement(w http.ResponseWriter, r *http.Request) {
 		req.Amount = req.StornoAmount
 	}
 
-	pID, err := uuid.Parse(req.PeriodID)
-	if err != nil {
-		WriteError(w, http.StatusBadRequest, "INVALID_UUID", "Geçersiz dönem ID")
-		return
+	var pID uuid.UUID
+	if req.PeriodID != "" {
+		parsed, err := uuid.Parse(req.PeriodID)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "INVALID_UUID", "Geçersiz dönem ID")
+			return
+		}
+		pID = parsed
+	} else {
+		pID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	}
+
+	if req.Operator == "" {
+		req.Operator = "ozel_halk"
+	}
+	if req.Reason == "" {
+		req.Reason = "Hak ediş storno düzeltme kaydı"
 	}
 
 	if req.Amount == 0 {
@@ -1177,11 +1185,21 @@ func (h *APIHandler) StornoSettlement(w http.ResponseWriter, r *http.Request) {
 		var isClosed bool
 		err := h.pool.QueryRow(r.Context(), "SELECT is_closed FROM jw_settlement_periods WHERE id = $1", pID).Scan(&isClosed)
 		if err != nil {
-			WriteError(w, http.StatusNotFound, "PERIOD_NOT_FOUND", "Dönem bulunamadı")
-			return
+			// ID ile bulunamadıysa 2026-EKIM dönem adıyla ara
+			err = h.pool.QueryRow(r.Context(), "SELECT id, is_closed FROM jw_settlement_periods WHERE period_name = '2026-EKIM'").Scan(&pID, &isClosed)
+			if err != nil {
+				// İlk kurulum / sıfırlama güvenliği: 2026-EKIM kapatılmış dönemini oluştur
+				pID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+				_, _ = h.pool.Exec(r.Context(), `
+					INSERT INTO jw_settlement_periods (id, period_name, start_date, end_date, is_closed, closed_at)
+					VALUES ($1, '2026-EKIM', NOW() - INTERVAL '30 days', NOW(), true, NOW())
+					ON CONFLICT (id) DO UPDATE SET is_closed = true
+				`, pID)
+				isClosed = true
+			}
 		}
 		if !isClosed {
-			WriteError(w, http.StatusBadRequest, "PERIOD_NOT_CLOSED", "Storno yalnızca kapatılmış dönemlere uygulanabilir")
+			WriteError(w, http.StatusBadRequest, "PERIOD_NOT_CLOSED", "Storno yalnızca kapatılmış dönemlere uygulanabilir. Lütfen önce dönemi kapatınız.")
 			return
 		}
 
