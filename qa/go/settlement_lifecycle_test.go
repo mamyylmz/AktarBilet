@@ -161,7 +161,9 @@ func TestSettlement_FullLifecycle_Audit(t *testing.T) {
 		w := httptest.NewRecorder()
 		rig.router.ServeHTTP(w, req)
 		t.Logf("[6. Close without period_id] status code: %d, body: %s", w.Code, w.Body.String())
-		// Current bug: fails with 400 INVALID_UUID because period_id is required
+		if w.Code != http.StatusConflict {
+			t.Errorf("[6. Close without period_id] 409 Conflict bekleniyordu, alınan: %d", w.Code)
+		}
 	}
 
 	// 7. Reopen Period with valid period_name and reason
@@ -227,5 +229,8 @@ func TestSettlement_FullLifecycle_Audit(t *testing.T) {
 		w := httptest.NewRecorder()
 		rig.router.ServeHTTP(w, req)
 		t.Logf("[10. Close after Reopen in memory] status code: %d, body: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusOK {
+			t.Errorf("[10. Close after Reopen] 200 OK bekleniyordu, alınan: %d, body: %s", w.Code, w.Body.String())
+		}
 	}
 }

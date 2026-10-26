@@ -230,6 +230,20 @@ func (s *SettlementService) ClosePeriod(periodID uuid.UUID) (*SettlementPeriod, 
 	return period, nil
 }
 
+// ReopenPeriod reopens a closed period for audit and adjustment purposes
+func (s *SettlementService) ReopenPeriod(periodID uuid.UUID) (*SettlementPeriod, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	period, ok := s.periods[periodID]
+	if !ok {
+		return nil, ErrPeriodNotFound
+	}
+	period.IsClosed = false
+	period.ClosedAt = nil
+	return period, nil
+}
+
 // RecordStornoAfterClose adds a storno/correction entry after a period has already closed
 func (s *SettlementService) RecordStornoAfterClose(
 	periodID uuid.UUID,

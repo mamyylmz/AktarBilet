@@ -137,6 +137,7 @@ export default function App() {
   });
   const [settlementData, setSettlementData] = useState(null);
   const [loadingSettlements, setLoadingSettlements] = useState(false);
+  const [closingPeriod, setClosingPeriod] = useState(false);
 
   // 6. Inspector State
   const [queriedCard, setQueriedCard] = useState(null);
@@ -537,6 +538,7 @@ export default function App() {
 
   // Accounting: Settlement Close action (Section 11)
   const handleCloseSettlement = async () => {
+    setClosingPeriod(true);
     try {
       const token = getActiveToken();
       const headers = { 'Content-Type': 'application/json' };
@@ -551,10 +553,17 @@ export default function App() {
         }),
       });
       const data = await res.json().catch(() => null);
-      if (res.ok) {
+
+      // 200 OK veya 409 ALREADY_CLOSED: Her iki durumda da dönem kapalıdır!
+      if (res.ok || res.status === 409 || data?.error?.code === 'ALREADY_CLOSED') {
         setIsPeriodClosed(true);
         localStorage.setItem('settlement_period_closed', 'true');
-        showToast('Ekim 2026 Gelir Paylaşım Dönemi Başarıyla Kapatıldı.', 'success');
+        showToast(
+          res.ok
+            ? 'Ekim 2026 Gelir Paylaşım Dönemi Başarıyla Kapatıldı.'
+            : 'Dönem zaten kapatılmış durumda. Kayıtlar kilitli ve denetime hazır.',
+          res.ok ? 'success' : 'info'
+        );
         fetchSettlements();
       } else {
         const errorMsg = data?.error?.message || data?.message || 'Dönem kapatma başarısız oldu.';
@@ -562,6 +571,8 @@ export default function App() {
       }
     } catch {
       showToast('Dönem kapatma isteği başarısız oldu.', 'error');
+    } finally {
+      setClosingPeriod(false);
     }
   };
 
@@ -655,6 +666,17 @@ export default function App() {
     };
     if (user.role && roleMapping[user.role]) {
       setActiveRole(roleMapping[user.role]);
+    }
+  };
+
+  const handleQuickLoginMuhasebe = async () => {
+    try {
+      const data = await api.login('muhasebe@aktarbilet.gov.tr', 'MuhasebePassword123!');
+      if (data && data.access_token) {
+        handleLoginSuccess(data.access_token, data.user);
+      }
+    } catch (err) {
+      showToast(`Giriş başarısız: ${err.message}`, 'error');
     }
   };
 
@@ -773,9 +795,12 @@ export default function App() {
                 onClosePeriod={handleCloseSettlement}
                 onReopenPeriod={handleReopenPeriod}
                 onStorno={handleStorno}
+                closingPeriod={closingPeriod}
                 settlementData={settlementData}
                 loading={loadingSettlements}
                 onShowToast={showToast}
+                onFetchSettlements={fetchSettlements}
+                onLoginAsMuhasebe={handleQuickLoginMuhasebe}
               />
             )}
 

@@ -14,6 +14,9 @@ export function AccountingPortal({
   stornoLoading = false,
   settlementData = null,
   loading = false,
+  token,
+  onFetchSettlements,
+  onLoginAsMuhasebe,
 }) {
   const [stornoRef, setStornoRef] = useState('REF_REC_500T_001');
   const [stornoReason, setStornoReason] = useState('Mükerrer çekim düzeltmesi');
@@ -144,6 +147,31 @@ export function AccountingPortal({
 
   return (
     <div className="portal-container space-y-6">
+      {/* Oturum Açılmadı / Yetki Uyarısı */}
+      {!token && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className="text-xl" aria-hidden="true">⚠️</span>
+            <div>
+              <h4 className="text-sm font-semibold text-foreground">Oturum Açılmadı (Muhasebe Yetkisi Gerekli)</h4>
+              <p className="text-xs text-muted">
+                Dönem mutabakatını kesinleştirmek veya denetim amaçlı yeniden açmak için sisteme Muhasebe veya Admin rolüyle giriş yapmalısınız.
+              </p>
+            </div>
+          </div>
+          {onLoginAsMuhasebe && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={onLoginAsMuhasebe}
+              className="whitespace-nowrap font-medium"
+            >
+              🔐 Muhasebe Girişi Yap
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* Overview KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="kpi-card p-4 rounded-lg bg-surface border border-border">
@@ -198,9 +226,23 @@ export function AccountingPortal({
           <div className="space-y-4">
             {/* 1. Canlı Durum Rozeti (Status Badge) */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-lg border bg-surface-muted border-border gap-2">
-              <span className="text-xs font-semibold text-foreground uppercase tracking-wider">
-                Aktif Dönem: <strong>2026-EKİM</strong>
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                  Aktif Dönem: <strong>2026-EKİM</strong>
+                </span>
+                {onFetchSettlements && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onFetchSettlements}
+                    loading={loading}
+                    className="text-xs py-0.5 px-2 h-auto"
+                    title="Dönem mutabakat durumunu sunucudan yenile"
+                  >
+                    🔄 Durumu Yenile
+                  </Button>
+                )}
+              </div>
               {isPeriodClosed ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-danger/15 text-danger border border-danger/30">
                   <span className="w-2 h-2 rounded-full bg-danger animate-pulse" aria-hidden="true" />

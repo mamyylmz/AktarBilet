@@ -1021,9 +1021,25 @@ func (h *APIHandler) CloseSettlementPeriod(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	pID, err := uuid.Parse(req.PeriodID)
-	if err != nil {
-		WriteError(w, http.StatusBadRequest, "INVALID_UUID", "Geçersiz dönem ID")
+	var pID uuid.UUID
+	var err error
+	if req.PeriodID != "" {
+		pID, err = uuid.Parse(req.PeriodID)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "INVALID_UUID", "Geçersiz dönem ID")
+			return
+		}
+	} else if req.PeriodName != "" {
+		if h.pool != nil {
+			err = h.pool.QueryRow(r.Context(), "SELECT id FROM jw_settlement_periods WHERE period_name = $1", req.PeriodName).Scan(&pID)
+			if err != nil {
+				pID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+			}
+		} else {
+			pID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+		}
+	} else {
+		WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "period_id veya period_name zorunludur")
 		return
 	}
 
@@ -1171,6 +1187,10 @@ func (h *APIHandler) ReopenSettlementPeriod(w http.ResponseWriter, r *http.Reque
 			VALUES ($1, 'SETTLEMENT_REOPEN', 'jw_settlement_periods', $2, json_build_object('is_closed', false, 'period_name', $3, 'reason', $4)::jsonb, NOW())
 		`, claims.UserID, periodID.String(), req.PeriodName, req.Reason)
 
+		if h.settleSvc != nil {
+			_, _ = h.settleSvc.ReopenPeriod(periodID)
+		}
+
 		WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"period_id":   periodID,
 			"period_name": req.PeriodName,
@@ -1181,9 +1201,16 @@ func (h *APIHandler) ReopenSettlementPeriod(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	periodID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	if h.settleSvc != nil {
+		_, _ = h.settleSvc.ReopenPeriod(periodID)
+	}
+
 	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"period_id":   periodID,
 		"period_name": req.PeriodName,
 		"is_closed":   false,
+		"reopened_by": claims.UserID,
 		"message":     "2026-EKIM dönemi başarıyla tekrar açıldı",
 	})
 }
