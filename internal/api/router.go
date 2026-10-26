@@ -20,9 +20,26 @@ func SetupRouter(h *APIHandler, ddoStamp string) *chi.Mux {
 
 	// 3. CORS Yapılandırması (Wildcard credentials açık bırakılmaz, güvenli kökenler tanımlanır)
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:13000", "http://127.0.0.1:13000"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "Idempotency-Key", "X-DDO-Stamp"},
+		AllowedOrigins: []string{
+			"http://localhost:3000", "http://127.0.0.1:3000",
+			"http://localhost:13000", "http://127.0.0.1:13000",
+			"http://localhost:5173", "http://127.0.0.1:5173",
+			"http://localhost:8080", "http://127.0.0.1:8080",
+			"https://*", "http://*",
+		},
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{
+			"Accept",
+			"Authorization",
+			"Content-Type",
+			"X-CSRF-Token",
+			"Idempotency-Key",
+			"X-DDO-Stamp",
+			"X-Validator-ID",
+			"X-Device-Signature",
+			"X-Device-Timestamp",
+			"X-Device-Nonce",
+		},
 		ExposedHeaders:   []string{"Link", "X-DDO-Stamp", "Idempotency-Key"},
 		AllowCredentials: false,
 		MaxAge:           300,

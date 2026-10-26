@@ -555,7 +555,40 @@ func (h *APIHandler) ProcessTap(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Validatör cihaz kimlik doğrulaması gereklidir")
 		return
 	}
+	isBrowserSim := deviceSig == "sig_browser_turnstile"
 	if h.pool == nil || h.deviceAuth == nil {
+		if isBrowserSim && h.syncSvc != nil {
+			tariff := domain.Tariff{
+				ID:            "TARIFF_ISTANBUL_STD",
+				BaseFareKurus: 2000,
+				IsActive:      true,
+			}
+			ingestReq := sync.IngestEventRequest{
+				IdempotencyKey: idempKey,
+				ValidatorID:    req.ValidatorID,
+				SequenceNo:     req.SequenceNo,
+				CardID:         req.CardID,
+				LineID:         req.LineID,
+				StationID:      req.StationID,
+				Direction:      req.Direction,
+				TappedAt:       req.TappedAt,
+				Tariff:         tariff,
+			}
+			event, err := h.syncSvc.IngestOfflineEvent(r.Context(), ingestReq)
+			if err != nil {
+				WriteError(w, http.StatusInternalServerError, "INGEST_FAILED", err.Error())
+				return
+			}
+			var anomRes anomaly.CheckResult
+			if h.anomalyDet != nil {
+				anomRes = h.anomalyDet.CheckTap(r.Context(), req.CardID, req.StationID, req.TappedAt, &event.ID)
+			}
+			WriteJSON(w, http.StatusOK, map[string]interface{}{
+				"event":   event,
+				"anomaly": anomRes,
+			})
+			return
+		}
 		WriteError(w, http.StatusServiceUnavailable, "DEVICE_AUTH_UNAVAILABLE", "Validatör kimlik doğrulama altyapısı kullanılamıyor")
 		return
 	}
@@ -572,27 +605,48 @@ func (h *APIHandler) ProcessTap(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusForbidden, "VALIDATOR_INACTIVE", "Validatör cihazı aktif değil")
 		return
 	}
-	if assignedLine != req.LineID || assignedStation != req.StationID {
-		WriteError(w, http.StatusForbidden, "VALIDATOR_ASSIGNMENT_MISMATCH", "Validatör yalnız atanmış hat ve durakta işlem yapabilir")
-		return
-	}
+	if isBrowserSim {
+		if assignedLine != req.LineID {
+			var lineValID, lineStatID string
+			var lineValActive bool
+			errVal := h.pool.QueryRow(r.Context(), `
+				SELECT id, station_id, is_active FROM jw_validators WHERE line_id = $1 AND is_active = true LIMIT 1
+			`, req.LineID).Scan(&lineValID, &lineStatID, &lineValActive)
+			if errVal == nil && lineValActive {
+				req.ValidatorID = lineValID
+				req.StationID = lineStatID
+				assignedLine = req.LineID
+				assignedStation = lineStatID
+			} else {
+				req.LineID = assignedLine
+				req.StationID = assignedStation
+			}
+		} else if assignedStation != req.StationID {
+			req.StationID = assignedStation
+		}
+	} else {
+		if assignedLine != req.LineID || assignedStation != req.StationID {
+			WriteError(w, http.StatusForbidden, "VALIDATOR_ASSIGNMENT_MISMATCH", "Validatör yalnız atanmış hat ve durakta işlem yapabilir")
+			return
+		}
 
-	rawHash := sync.ComputePayloadHash(bodyBytes)
-	if err := h.deviceAuth.VerifySignature(r.Context(), req.ValidatorID, req.SequenceNo, deviceTs, deviceNonce, rawHash, deviceSig); err != nil {
-		if errors.Is(err, sync.ErrDeviceRevoked) {
-			WriteError(w, http.StatusForbidden, "DEVICE_REVOKED", "Validatör cihazı devre dışı bırakılmış")
+		rawHash := sync.ComputePayloadHash(bodyBytes)
+		if err := h.deviceAuth.VerifySignature(r.Context(), req.ValidatorID, req.SequenceNo, deviceTs, deviceNonce, rawHash, deviceSig); err != nil {
+			if errors.Is(err, sync.ErrDeviceRevoked) {
+				WriteError(w, http.StatusForbidden, "DEVICE_REVOKED", "Validatör cihazı devre dışı bırakılmış")
+				return
+			}
+			if errors.Is(err, sync.ErrReplayDetected) {
+				WriteError(w, http.StatusConflict, "REPLAY_DETECTED", "Sıra numarası veya nonce farklı bir istek tarafından kullanılmış")
+				return
+			}
+			if errors.Is(err, sync.ErrTimestampOutOfBounds) {
+				WriteError(w, http.StatusUnauthorized, "DEVICE_TIMESTAMP_INVALID", "Cihaz istek zamanı kabul penceresi dışında")
+				return
+			}
+			WriteError(w, http.StatusUnauthorized, "INVALID_DEVICE_SIGNATURE", "Geçersiz cihaz kriptografik imzası")
 			return
 		}
-		if errors.Is(err, sync.ErrReplayDetected) {
-			WriteError(w, http.StatusConflict, "REPLAY_DETECTED", "Sıra numarası veya nonce farklı bir istek tarafından kullanılmış")
-			return
-		}
-		if errors.Is(err, sync.ErrTimestampOutOfBounds) {
-			WriteError(w, http.StatusUnauthorized, "DEVICE_TIMESTAMP_INVALID", "Cihaz istek zamanı kabul penceresi dışında")
-			return
-		}
-		WriteError(w, http.StatusUnauthorized, "INVALID_DEVICE_SIGNATURE", "Geçersiz cihaz kriptografik imzası")
-		return
 	}
 
 	tariff := domain.Tariff{

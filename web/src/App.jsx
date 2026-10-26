@@ -240,6 +240,42 @@ export default function App() {
     }
   };
 
+  // Centralized Card and Ledger refresh helper
+  const refreshCardData = async (cardId = 'CARD_YOLCU_001') => {
+    try {
+      const token =
+        (typeof window !== 'undefined' &&
+          (localStorage.getItem('auth_token_yolcu') || localStorage.getItem('auth_token'))) ||
+        authToken;
+
+      const [cardData, ledgerData] = await Promise.allSettled([
+        api.getCard(cardId, token),
+        api.getLedger(cardId, token),
+      ]);
+
+      if (cardData.status === 'fulfilled' && cardData.value) {
+        const c = cardData.value;
+        const balKurus = c.balance_kurus !== undefined ? c.balance_kurus : (c.balance || 0);
+        setCard((prev) => ({
+          ...prev,
+          id: c.card_id || c.id || cardId,
+          balance_kurus: balKurus,
+          balance_tl: `${(balKurus / 100).toFixed(2)} ₺`,
+          card_type: c.card_type || prev?.card_type || 'tam',
+        }));
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('card_balance_kurus', balKurus.toString());
+        }
+      }
+
+      if (ledgerData.status === 'fulfilled' && Array.isArray(ledgerData.value)) {
+        setLedger(ledgerData.value);
+      }
+    } catch (err) {
+      console.warn('Kart verileri senkronizasyon uyarısı:', err);
+    }
+  };
+
   // Trigger role-specific data fetching on navigation
   useEffect(() => {
     if (activeRole === 'heatmap') {
@@ -248,6 +284,8 @@ export default function App() {
       fetchLineFinancials();
     } else if (activeRole === 'muhasebe') {
       fetchSettlements();
+    } else if (activeRole === 'yolcu' || activeRole === 'home') {
+      refreshCardData(card?.id || 'CARD_YOLCU_001');
     }
   }, [activeRole]);
 
@@ -288,7 +326,7 @@ export default function App() {
         setCard((prev) => ({
           ...prev,
           balance_kurus: newBal,
-          balance_tl: newBal / 100,
+          balance_tl: `${(newBal / 100).toFixed(2)} ₺`,
         }));
         localStorage.setItem('card_balance_kurus', newBal.toString());
         setLedger((prev) => [
@@ -303,6 +341,7 @@ export default function App() {
           ...prev,
         ]);
         showToast(`${amountTL} TL başarıyla yüklendi!`, 'success');
+        refreshCardData(card.id);
       } else if (res.status === 401) {
         showToast('Bakiye yüklemek için oturum açmanız gerekmektedir. Lütfen giriş yapınız.', 'error');
       } else {
@@ -317,41 +356,71 @@ export default function App() {
 
   // Turnstile tap action (Gerçek API Yanıtı — Sahte Başarı Bildirimi Yok)
   const handleTapTurnstile = async (lineId = 'LINE_500T', lineName = '500T') => {
+    const cardId = card?.id || 'CARD_YOLCU_001';
+
+    const VALIDATOR_LINE_MAP = {
+      LINE_500T: { valId: 'VAL_500T_01', statId: 'STAT_AYRILIK' },
+      LINE_14ES: { valId: 'VAL_14ES_01', statId: 'STAT_KADIKOY' },
+      LINE_T1: { valId: 'VAL_T1_01', statId: 'STAT_KABATAS' },
+      LINE_VAPUR_KE: { valId: 'VAL_VAPUR_01', statId: 'STAT_KADIKOY' },
+      default: { valId: 'VAL_500T_01', statId: 'STAT_AYRILIK' },
+    };
+
+    const targetVal = VALIDATOR_LINE_MAP[lineId] || VALIDATOR_LINE_MAP.default;
+    const now = Date.now();
+    const seq = now;
+    const idempKey = `TAP_${cardId}_${lineId}_${now}`;
+
     try {
       const res = await fetch('/api/v1/validators/tap', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Validator-ID': 'VAL_500T_01',
-          'Idempotency-Key': `TAP_${Date.now()}`,
-          'X-Device-Nonce': `nonce_${Date.now()}`,
-          'X-Device-Timestamp': `${Math.floor(Date.now() / 1000)}`,
+          'X-Validator-ID': targetVal.valId,
+          'Idempotency-Key': idempKey,
+          'X-Device-Nonce': `nonce_${now}`,
+          'X-Device-Timestamp': `${Math.floor(now / 1000)}`,
           'X-Device-Signature': 'sig_browser_turnstile',
         },
         body: JSON.stringify({
-          validator_id: 'VAL_500T_01',
-          card_id: card.id,
+          validator_id: targetVal.valId,
+          card_id: cardId,
           line_id: lineId,
-          station_id: 'STAT_AYRILIK',
-          sequence_no: 1,
+          station_id: targetVal.statId,
+          sequence_no: seq,
           direction: 1,
           tapped_at: new Date().toISOString(),
         }),
       });
+
       if (res.ok) {
-        showToast(`Kartınız ${lineName} turnikesinde başarıyla okutuldu.`, 'success');
-        if (transferTimer <= 0) {
-          setTransferTimer(5400); // 90 min countdown
-          setTransferLevel(1);
+        const data = await res.json().catch(() => ({}));
+        const ev = data?.event;
+        if (ev && ev.status === 'REJECTED') {
+          showToast(`Turnike geçiş reddedildi: ${ev.rejection_reason || 'Kart kabul edilmedi.'}`, 'error');
         } else {
-          setTransferLevel((prev) => prev + 1);
+          const fareCharged = ev?.fare_charged_kurus ?? 2000;
+          const fareTL = (fareCharged / 100).toFixed(2);
+          const transferInfo = ev?.is_transfer ? ` (Aktarma #${ev.transfer_level})` : '';
+          showToast(`Kartınız ${lineName} turnikesinde başarıyla okutuldu.${transferInfo} Tutar: ₺${fareTL}`, 'success');
+
+          if (transferTimer <= 0) {
+            setTransferTimer(5400); // 90 min countdown
+            setTransferLevel(1);
+          } else {
+            setTransferLevel((prev) => prev + 1);
+          }
         }
+
+        // Bakiye ve defteri API'den anında senkronize et
+        await refreshCardData(cardId);
       } else {
         const errData = await res.json().catch(() => ({}));
-        const msg = errData?.error?.message || 'Cihaz doğrulaması başarısız oldu (401/403).';
+        const msg = errData?.error?.message || errData?.message || `Cihaz doğrulaması başarısız oldu (${res.status}).`;
         showToast(`Turnike geçiş reddedildi (${res.status}): ${msg}`, 'error');
       }
-    } catch {
+    } catch (err) {
+      console.error('Turnike tap hatası:', err);
       showToast('Turnike bağlantı hatası: Sunucuya ulaşılamadı.', 'error');
     }
   };

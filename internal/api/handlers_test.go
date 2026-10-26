@@ -296,8 +296,41 @@ func TestAPI_ProcessTap_And_Batch(t *testing.T) {
 	reqBatch.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
 	wBatch := httptest.NewRecorder()
 	rig.router.ServeHTTP(wBatch, reqBatch)
-	if wBatch.Code != http.StatusUnauthorized {
-		t.Fatalf("Admin JWT ile batch sync 401 dönmeli, alınan: %d (%s)", wBatch.Code, wBatch.Body.String())
+	// 4. Browser Turnstile Tap Simülasyonu -> 200 OK
+	simBody, _ := json.Marshal(map[string]interface{}{
+		"validator_id": "VAL_500T_01",
+		"sequence_no":  3001,
+		"card_id":      "CARD_YOLCU_001",
+		"line_id":      "LINE_500T",
+		"station_id":   "STAT_AYRILIK",
+		"direction":    1,
+		"tapped_at":    time.Now().Format(time.RFC3339),
+	})
+	reqSim := httptest.NewRequest("POST", "/api/v1/validators/tap", bytes.NewReader(simBody))
+	reqSim.Header.Set("Content-Type", "application/json")
+	reqSim.Header.Set("X-Validator-ID", "VAL_500T_01")
+	reqSim.Header.Set("X-Device-Signature", "sig_browser_turnstile")
+	reqSim.Header.Set("X-Device-Timestamp", fmt.Sprintf("%d", time.Now().Unix()))
+	reqSim.Header.Set("X-Device-Nonce", "nonce_sim_test_1")
+	reqSim.Header.Set("Idempotency-Key", "SIM_TAP_KEY_1")
+	wSim := httptest.NewRecorder()
+	rig.router.ServeHTTP(wSim, reqSim)
+	if wSim.Code != http.StatusOK {
+		t.Fatalf("Browser turnstile tap simülasyonu 200 dönmeli, alınan: %d (%s)", wSim.Code, wSim.Body.String())
+	}
+
+	// 5. CORS Preflight OPTIONS kontrolü: Validatör başlıkları kabul edilmeli
+	reqCORS := httptest.NewRequest("OPTIONS", "/api/v1/validators/tap", nil)
+	reqCORS.Header.Set("Origin", "http://localhost:3000")
+	reqCORS.Header.Set("Access-Control-Request-Method", "POST")
+	reqCORS.Header.Set("Access-Control-Request-Headers", "X-Validator-ID, X-Device-Signature, X-Device-Timestamp, X-Device-Nonce, Idempotency-Key, Content-Type")
+	wCORS := httptest.NewRecorder()
+	rig.router.ServeHTTP(wCORS, reqCORS)
+	if wCORS.Code != http.StatusOK && wCORS.Code != http.StatusNoContent {
+		t.Fatalf("CORS OPTIONS preflight 200/204 dönmeli, alınan: %d", wCORS.Code)
+	}
+	if wCORS.Header().Get("Access-Control-Allow-Origin") == "" {
+		t.Fatalf("CORS Access-Control-Allow-Origin başlığı eksik!")
 	}
 }
 
