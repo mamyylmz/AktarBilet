@@ -184,3 +184,27 @@ Durum: `UIUX_IMPLEMENTATION_COMPLETE — READY_FOR_INDEPENDENT_QA`.
 
 *Antigravity — Principal Developer*  
 *DDO Case Kodu: SEDIR-f85f26*
+
+## 2026-10-30 — Faz 2+ devamı (Codex)
+
+- **Faz 1 / ilk push:** Bu devam turunun başında `main` çalışma ağacı `origin/main` ile eşitti. GitHub Actions `push` tetikleyicisiyle yerel HEAD `05b4cd5196837ee034388d2b962f4592e37a2b59` commit'ini doğruladı. Branch `main`; run `41124146332` başarılı. Bu run URL'si: https://github.com/mamyylmz/AktarBilet/actions/runs/41124146332.
+- **Faz 2 / Docker:** Linux `docker` komutu WSL dağıtımında yok. Windows Docker CLI 28.3.3 ve Compose 2.39.2 açılıyor; `desktop-linux` context'inde `docker version`/`docker info`, `//./pipe/dockerDesktopLinuxEngine` bulunmadığından Engine'e bağlanamıyor. `docker desktop start` “already running” dedi, ancak `docker desktop status` durum alamadı; son 10 dakikadaki Docker Desktop error log sorgusu boş döndü. `wsl.exe --status`, `wsl.exe --list --verbose`, `cmd.exe` ve PowerShell çağrıları `UtilBindVsockAnyPort: socket failed 1` ile başarısız. Windows servis/process durumuna ulaşılamadı. `eMudhra` duyurusunun kök neden olduğu kanıtlanmadı; factory reset, prune, volume silme, servis restart ve WSL shutdown yapılmadı. Docker root cause/onarımı **BLOCKED**; Windows PowerShell'de servis/WSL durumu ve güvenli yeniden başlatma gerektiriyor.
+- **Faz 3 / servisler:** Engine bağlantısı olmadığı için Compose durumu, mevcut volume'ler ve uygulama sağlık uçları bu devam turunda ölçülemedi; AktarBilet container/volume'lerine dokunulmadı. Uygulama servisleri **BLOCKED**.
+- **Faz 4–5 / doğrulama:** Yerel `go test ./...` ve `go vet ./...` PASS. Yerel `go test -race ./...` hostta `CGO_ENABLED=0` nedeniyle başlayamadı. Aynı HEAD için CI run `41124146332` içindeki “Tüm internal race ve PostgreSQL entegrasyon testleri” ve `make verify` job'ları PASS. Full Playwright bu devam turunda yeniden çalışmadı; mevcut WSL Docker daemon erişim engeli nedeniyle önceki 157 PASS çıktısı yeni bir çalıştırma sayılmıyor. Route-stop sırası, resmi yürürlük tarihli tarife ve güncel OpenAPI/k6/chaos kanıtı açık kabul sınırlarıdır. Genel proje kabulü **NOT_READY**.
+- **Faz 6 / README:** Korumalı beş soru-cevap bölümü HEAD ile byte-byte aynı; SHA-256 `5f6682635016d34bcd7192ab850501dc218b61376bc6b23a2e6d3d2601f7bda9` (13.395 byte). README son satır canary doğru. Çalışma ağacında bu bölümün ardından 18 satırlık ek bir silme farkı bulundu (`README.md` SHA HEAD `76aefd8e...`, çalışma ağacı `6a802118...`); bu devam turunda Codex tarafından yapılmadı ve commit'e alınmayacak.
+- **Faz 7–8 / teslim:** `gh auth status` PASS; güncel CI sonucu yukarıdaki run'dır. Acceptance ve handoff güncellendi; bu rapor değişiklikleri için son commit/push adımı henüz yapılmadı. Docker ve şartname kabul engelleri nedeniyle `DELIVERY_STATUS: NOT_READY`.
+
+### Windows'ta devam için salt-okunur teşhis
+
+WSL/PowerShell interop bu oturumda çalışmadığı için Windows PowerShell'de (önce yönetici olmayan oturumda) şu kontrollerin çıktısı gereklidir:
+
+```powershell
+wsl --status
+wsl --list --verbose
+Get-Service com.docker.service -ErrorAction SilentlyContinue | Format-List Name,Status,StartType
+Get-Process 'Docker Desktop','com.docker.backend' -ErrorAction SilentlyContinue | Select-Object ProcessName,Id
+docker version
+docker context ls
+```
+
+WSL shutdown veya Windows restart gerekirse bu checkpoint kaydedilmiştir; o adımlar bu turda çalıştırılmadı.
