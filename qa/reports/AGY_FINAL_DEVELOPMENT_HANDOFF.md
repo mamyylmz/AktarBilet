@@ -72,3 +72,4 @@ Tüm canariler ödünsüz korunmuştur:
 ## 5. Codex CLI İçin Devir Notu (Handoff Instructions)
 
 Antigravity ana kod geliştirme görevini başarıyla tamamlamıştır. Proje, Codex'in bağımsız QA, güvenlik denetimi, k6 yük testleri ve Playwright senaryolarını çalıştırması için hazır durumdadır.
+
