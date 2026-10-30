@@ -19,8 +19,8 @@ function event(index) {
     validator_id: 'VAL_500T_01',
     sequence_no: Number(`${Date.now()}`.slice(-10)) * 10000 + index,
     card_id: `CARD_SIM_${String(index + 1).padStart(6, '0')}`,
-    line_id: 'LINE_500T',
-    station_id: 'STAT_AYRILIK',
+    line_id: 'LINE_5',
+    station_id: 'STAT_ESHOT_10177',
     direction: 1,
     tapped_at: new Date(Date.now() - index).toISOString()
   };

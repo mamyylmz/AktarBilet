@@ -71,7 +71,7 @@ func (m *MemoryLedger) ProcessTap(
 	refID, desc string,
 	allowNegativeLimit domain.Kurus,
 ) (*domain.LedgerEntry, error) {
-	if fare <= 0 {
+	if fare < 0 {
 		return nil, ErrInvalidAmount
 	}
 
@@ -288,6 +288,44 @@ type PostgresLedger struct {
 	pool DBTxStarter
 }
 
+// lockCardAndReadLedgerBalance locks the card row before summing the ledger.
+// Keeping the SUM in a separate statement is important at READ COMMITTED:
+// a statement that waits on FOR UPDATE may retain its pre-wait snapshot for
+// subqueries and otherwise calculate a stale balance after concurrent writes.
+func lockCardAndReadLedgerBalance(ctx context.Context, tx pgx.Tx, cardID string) (domain.Kurus, bool, error) {
+	var isBlacklisted bool
+	if err := tx.QueryRow(ctx, `SELECT is_blacklisted FROM jw_cards WHERE id = $1 FOR UPDATE`, cardID).Scan(&isBlacklisted); err != nil {
+		return 0, false, fmt.Errorf("kart kilitlenemedi: %w", err)
+	}
+	var balance domain.Kurus
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount_kurus), 0) FROM jw_ledger WHERE card_id = $1`, cardID).Scan(&balance); err != nil {
+		return 0, false, fmt.Errorf("defter bakiyesi okunamadı: %w", err)
+	}
+	return balance, isBlacklisted, nil
+}
+
+func findLedgerEntryByReference(ctx context.Context, tx pgx.Tx, refID string) (*domain.LedgerEntry, error) {
+	var entry domain.LedgerEntry
+	var reference, description *string
+	err := tx.QueryRow(ctx, `
+		SELECT id, card_id, entry_type, amount_kurus, balance_after_kurus, reference_id, description, created_at
+		FROM jw_ledger WHERE reference_id = $1
+	`, refID).Scan(&entry.ID, &entry.CardID, &entry.EntryType, &entry.AmountKurus, &entry.BalanceAfterKurus, &reference, &description, &entry.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if reference != nil {
+		entry.ReferenceID = *reference
+	}
+	if description != nil {
+		entry.Description = *description
+	}
+	return &entry, nil
+}
+
 func NewPostgresLedger(pool *pgxpool.Pool) *PostgresLedger {
 	return &PostgresLedger{pool: pool}
 }
@@ -303,6 +341,9 @@ func (p *PostgresLedger) ProcessTap(
 	refID, desc string,
 	allowNegativeLimit domain.Kurus,
 ) (*domain.LedgerEntry, error) {
+	if fare < 0 {
+		return nil, ErrInvalidAmount
+	}
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("tx begin hatası: %w", err)
@@ -311,44 +352,40 @@ func (p *PostgresLedger) ProcessTap(
 
 	// Idempotency: refID daha önce işlenmişse aynısını dön
 	if refID != "" {
-		var existing domain.LedgerEntry
-		var existingRef, existingDesc *string
-		err := tx.QueryRow(ctx, `
-			SELECT id, card_id, entry_type, amount_kurus, balance_after_kurus, reference_id, description, created_at
-			FROM jw_ledger
-			WHERE reference_id = $1
-		`, refID).Scan(&existing.ID, &existing.CardID, &existing.EntryType, &existing.AmountKurus, &existing.BalanceAfterKurus, &existingRef, &existingDesc, &existing.CreatedAt)
-		if err == nil {
+		existing, err := findLedgerEntryByReference(ctx, tx, refID)
+		if err != nil {
+			return nil, fmt.Errorf("idempotency kaydı okunamadı: %w", err)
+		}
+		if existing != nil {
 			if existing.AmountKurus != -fare || existing.CardID != cardID {
 				return nil, ErrIdempotencyConflict
 			}
-			if existingRef != nil {
-				existing.ReferenceID = *existingRef
-			}
-			if existingDesc != nil {
-				existing.Description = *existingDesc
-			}
-			return &existing, nil
+			return existing, nil
 		}
 	}
 
-	// SELECT ... FOR UPDATE ile kart bazlı serileştirme (ADR-002)
-	var currentBalance domain.Kurus
-	var isBlacklisted bool
-	err = tx.QueryRow(ctx, `
-		SELECT balance_kurus, is_blacklisted 
-		FROM jw_cards 
-		WHERE id = $1 
-		FOR UPDATE
-	`, cardID).Scan(&currentBalance, &isBlacklisted)
+	// Lock first, then issue a fresh READ COMMITTED statement to sum committed entries.
+	currentBalance, isBlacklisted, err := lockCardAndReadLedgerBalance(ctx, tx, cardID)
 	if err != nil {
-		return nil, fmt.Errorf("kart kilitlenemedi: %w", err)
+		return nil, err
+	}
+	// A same-key request may have committed while this transaction waited for the card lock.
+	if refID != "" {
+		existing, err := findLedgerEntryByReference(ctx, tx, refID)
+		if err != nil {
+			return nil, fmt.Errorf("idempotency kaydı okunamadı: %w", err)
+		}
+		if existing != nil {
+			if existing.AmountKurus != -fare || existing.CardID != cardID {
+				return nil, ErrIdempotencyConflict
+			}
+			return existing, nil
+		}
 	}
 
 	if isBlacklisted {
 		return nil, ErrCardBlacklisted
 	}
-
 	newBalance := currentBalance - fare
 	if newBalance < -allowNegativeLimit {
 		return nil, ErrInsufficientBalance
@@ -406,38 +443,34 @@ func (p *PostgresLedger) Recharge(
 
 	// Idempotency kontrolü: Aynı reference_id daha önce işlenmişse aynısını dön
 	if refID != "" {
-		var existing domain.LedgerEntry
-		var existingRef, existingDesc *string
-		err := tx.QueryRow(ctx, `
-			SELECT id, card_id, entry_type, amount_kurus, balance_after_kurus, reference_id, description, created_at
-			FROM jw_ledger
-			WHERE reference_id = $1
-		`, refID).Scan(&existing.ID, &existing.CardID, &existing.EntryType, &existing.AmountKurus, &existing.BalanceAfterKurus, &existingRef, &existingDesc, &existing.CreatedAt)
-		if err == nil {
+		existing, err := findLedgerEntryByReference(ctx, tx, refID)
+		if err != nil {
+			return nil, fmt.Errorf("idempotency kaydı okunamadı: %w", err)
+		}
+		if existing != nil {
 			if existing.AmountKurus != amount || existing.CardID != cardID {
 				return nil, ErrIdempotencyConflict
 			}
-			if existingRef != nil {
-				existing.ReferenceID = *existingRef
-			}
-			if existingDesc != nil {
-				existing.Description = *existingDesc
-			}
-			return &existing, nil
+			return existing, nil
 		}
 	}
 
-	var currentBalance domain.Kurus
-	err = tx.QueryRow(ctx, `
-		SELECT balance_kurus 
-		FROM jw_cards 
-		WHERE id = $1 
-		FOR UPDATE
-	`, cardID).Scan(&currentBalance)
+	currentBalance, _, err := lockCardAndReadLedgerBalance(ctx, tx, cardID)
 	if err != nil {
-		return nil, fmt.Errorf("kart kilitlenemedi: %w", err)
+		return nil, err
 	}
-
+	if refID != "" {
+		existing, err := findLedgerEntryByReference(ctx, tx, refID)
+		if err != nil {
+			return nil, fmt.Errorf("idempotency kaydı okunamadı: %w", err)
+		}
+		if existing != nil {
+			if existing.AmountKurus != amount || existing.CardID != cardID {
+				return nil, ErrIdempotencyConflict
+			}
+			return existing, nil
+		}
+	}
 	newBalance := currentBalance + amount
 	_, err = tx.Exec(ctx, `
 		UPDATE jw_cards 
@@ -496,17 +529,10 @@ func (p *PostgresLedger) StornoCorrection(
 	}
 	defer tx.Rollback(ctx)
 
-	var currentBalance domain.Kurus
-	err = tx.QueryRow(ctx, `
-		SELECT balance_kurus 
-		FROM jw_cards 
-		WHERE id = $1 
-		FOR UPDATE
-	`, cardID).Scan(&currentBalance)
+	currentBalance, _, err := lockCardAndReadLedgerBalance(ctx, tx, cardID)
 	if err != nil {
-		return nil, fmt.Errorf("kart kilitlenemedi: %w", err)
+		return nil, err
 	}
-
 	newBalance := currentBalance + amount
 	_, err = tx.Exec(ctx, `
 		UPDATE jw_cards 
@@ -547,7 +573,8 @@ func (p *PostgresLedger) StornoCorrection(
 func (p *PostgresLedger) GetCardBalance(ctx context.Context, cardID string) (domain.Kurus, error) {
 	var balance domain.Kurus
 	err := p.pool.QueryRow(ctx, `
-		SELECT balance_kurus FROM jw_cards WHERE id = $1
+		SELECT COALESCE((SELECT SUM(l.amount_kurus) FROM jw_ledger l WHERE l.card_id = c.id), 0)
+		FROM jw_cards c WHERE c.id = $1
 	`, cardID).Scan(&balance)
 	return balance, err
 }
@@ -557,7 +584,7 @@ func (p *PostgresLedger) GetCardLedger(ctx context.Context, cardID string) ([]do
 		SELECT id, card_id, entry_type, amount_kurus, balance_after_kurus, reference_id, description, created_at
 		FROM jw_ledger
 		WHERE card_id = $1
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, id DESC
 	`, cardID)
 	if err != nil {
 		return nil, err

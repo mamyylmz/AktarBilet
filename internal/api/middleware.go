@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -137,10 +138,16 @@ func RequireRole(pool QueryRower, roles ...domain.UserRole) func(http.Handler) h
 			if pool != nil {
 				var dbRole domain.UserRole
 				err := pool.QueryRow(r.Context(), "SELECT role FROM jw_tf_users WHERE id = $1", claims.UserID).Scan(&dbRole)
-				if err == nil {
-					currentRole = dbRole
-					claims.Role = dbRole
+				if err != nil {
+					if errors.Is(err, pgx.ErrNoRows) {
+						WriteError(w, http.StatusUnauthorized, "USER_REVOKED", "Kullanıcı kaydı bulunamadı veya yetkisi kaldırılmış")
+						return
+					}
+					WriteError(w, http.StatusInternalServerError, "DB_AUTH_ERROR", "Kullanıcı rol yetkisi doğrulanamadı: "+err.Error())
+					return
 				}
+				currentRole = dbRole
+				claims.Role = dbRole
 			}
 
 			// Admin her şeye erişebilir

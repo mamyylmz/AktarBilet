@@ -58,10 +58,14 @@ export function MapLibreView({ liveBuses = [], selectedLine = '800' }) {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const draw = () => {
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    const width = canvas.clientWidth || 800;
+    const height = canvas.clientHeight || 380;
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
     const ctx = canvas.getContext('2d');
-    const width = canvas.width;
-    const height = canvas.height;
-
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
     // Bounding Box: Lat [38.35, 38.65], Lon [27.0, 27.25]
@@ -136,6 +140,12 @@ export function MapLibreView({ liveBuses = [], selectedLine = '800' }) {
       ctx.textAlign = 'center';
       ctx.fillText(`🚌 #${b.bus_id}`, x, y - 12);
     });
+    };
+
+    draw();
+    const observer = new ResizeObserver(draw);
+    observer.observe(canvas.parentElement || canvas);
+    return () => observer.disconnect();
   }, [liveBuses, selectedLine, activeRoute]);
 
   return (

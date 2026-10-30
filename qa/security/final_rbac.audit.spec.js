@@ -57,7 +57,7 @@ test.describe('final endpoint-by-role audit', () => {
       headers: { ...bearer(token), 'Idempotency-Key': `RBAC-USER-AS-DEVICE-${Date.now()}` },
       data: {
         validator_id: 'VAL_500T_01', sequence_no: Date.now(), card_id: 'CARD_YOLCU_001',
-        line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
+        line_id: 'LINE_5', station_id: 'STAT_ESHOT_10177', direction: 1,
         tapped_at: new Date().toISOString()
       }
     });

@@ -18,15 +18,18 @@ test.describe('go-live browser acceptance', () => {
     await page.goto('/');
     await page.evaluate(() => localStorage.clear());
     await page.reload();
-    await page.getByRole('button', { name: '+50 TL Yükle' }).click();
+    await page.getByRole('button', { name: 'Yolcu Portalı' }).click();
     expect(loginRequests, 'the browser bundle contains and submits demo credentials').toBe(0);
-    await expect(page.getByText(/giriş.*gerek|oturum/i)).toBeVisible();
+    await expect(page.getByRole('dialog', { name: /AktarBilet Giriş/ })).toBeVisible();
   });
 
   test('UAT-04 storno control performs a server-side correction request', async ({ page }) => {
     await page.goto('/');
-    await page.waitForTimeout(800);
-    await page.getByRole('button', { name: /Muhasebe/ }).click();
+    await page.getByRole('button', { name: /Giriş Yap/ }).click();
+    const dialog = page.getByRole('dialog', { name: /AktarBilet Giriş/ });
+    await dialog.getByRole('button', { name: /Muhasebe \(Canan Finans\)/ }).click();
+    await dialog.getByRole('button', { name: /Giriş Yap/ }).click();
+    await expect(dialog).toBeHidden();
     const requestPromise = page.waitForRequest((request) =>
       request.url().includes('/api/v1/settlements/storno') && request.method() === 'POST',
     { timeout: 2_000 });

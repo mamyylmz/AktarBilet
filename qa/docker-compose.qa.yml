@@ -2,6 +2,7 @@ services:
   credential-init:
     image: alpine:3.20
     restart: "no"
+    network_mode: none
     command:
       - /bin/sh
       - -ec
@@ -20,6 +21,7 @@ services:
   simulator-storage-init:
     image: alpine:3.20
     restart: "no"
+    network_mode: none
     command: ["/bin/sh", "-ec", "chown -R 10001:10001 /data && chmod 0700 /data"]
     volumes:
       - qa_simulator_data:/data
@@ -38,7 +40,9 @@ services:
       timeout: 3s
       retries: 30
     networks:
-      - qa-net
+      qa-net:
+        aliases:
+          - "${COMPOSE_PROJECT_NAME:-aktarbilet-qa}-postgres"
 
   backend:
     build:
@@ -46,7 +50,7 @@ services:
       dockerfile: Dockerfile.backend
     environment:
       PORT: "8080"
-      DATABASE_URL: "postgres://aktarbilet_qa:qa-local-only@postgres:5432/aktarbilet_qa?sslmode=disable"
+      DATABASE_URL: "postgres://aktarbilet_qa:qa-local-only@${COMPOSE_PROJECT_NAME:-aktarbilet-qa}-postgres:5432/aktarbilet_qa?sslmode=disable"
       JWT_SECRET: "qa-only-jwt-secret-at-least-thirty-two-bytes"
       DDO_STAMP: "f85f26"
       ENVIRONMENT: "qa"
@@ -54,7 +58,7 @@ services:
     volumes:
       - qa_validator_credentials:/run/aktarbilet-secrets:ro
     ports:
-      - "127.0.0.1:18080:8080"
+      - "127.0.0.1:${QA_BACKEND_PORT:-18080}:8080"
     depends_on:
       credential-init:
         condition: service_completed_successfully
@@ -66,14 +70,18 @@ services:
       timeout: 3s
       retries: 30
     networks:
-      - qa-net
+      qa-net:
+        aliases:
+          - "${COMPOSE_PROJECT_NAME:-aktarbilet-qa}-backend"
 
   frontend:
     build:
       context: ..
       dockerfile: qa/Dockerfile.frontend.qa
+      args:
+        QA_BACKEND_HOST: "${COMPOSE_PROJECT_NAME:-aktarbilet-qa}-backend"
     ports:
-      - "127.0.0.1:13000:3000"
+      - "127.0.0.1:${QA_FRONTEND_PORT:-13000}:3000"
     depends_on:
       backend:
         condition: service_healthy
@@ -93,7 +101,7 @@ services:
       context: ..
       dockerfile: Dockerfile.simulator
     environment:
-      BACKEND_URL: "http://backend:8080"
+      BACKEND_URL: "http://${COMPOSE_PROJECT_NAME:-aktarbilet-qa}-backend:8080"
       VALIDATOR_CREDENTIALS_FILE: /run/aktarbilet-secrets/validator-credentials.json
       SIMULATOR_WAL_PATH: "/var/lib/aktarbilet-simulator/simulator_wal.jsonl"
       SIMULATOR_SEQ_PATH: "/var/lib/aktarbilet-simulator/simulator_seq.json"
@@ -110,7 +118,9 @@ services:
         condition: service_healthy
     profiles: ["simulator"]
     networks:
-      - qa-net
+      qa-net:
+        aliases:
+          - "${COMPOSE_PROJECT_NAME:-aktarbilet-qa}-simulator"
 
 volumes:
   qa_postgres_data:
@@ -120,3 +130,9 @@ volumes:
 networks:
   qa-net:
     driver: bridge
+    name: ${QA_NETWORK_NAME:-${COMPOSE_PROJECT_NAME:-aktarbilet-qa}_qa-net}
+  # Helper/init containers do not need service discovery. Avoid allocating an
+  # implicit per-project subnet when Docker's address pools are exhausted.
+  default:
+    name: bridge
+    external: true

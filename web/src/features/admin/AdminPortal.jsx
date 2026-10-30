@@ -3,7 +3,7 @@ import { Card } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 import { Table } from '../../components/ui/Table';
 import { api } from '../../services/api';
-import { formatDate } from '../../lib/formatters';
+import { formatDate, formatDateTime } from '../../lib/formatters';
 
 export function AdminPortal({ token, onShowToast, onRolePreview, activeRole }) {
   const [healthStatus, setHealthStatus] = useState(null);
@@ -12,52 +12,10 @@ export function AdminPortal({ token, onShowToast, onRolePreview, activeRole }) {
   const [loadingHealth, setLoadingHealth] = useState(false);
   const [anomalies, setAnomalies] = useState([]);
   const [loadingAnomalies, setLoadingAnomalies] = useState(false);
-
-  // Platform users directory with verified seed user role
-  const systemUsers = [
-    {
-      id: 'usr-1',
-      email: 'seed.sedir@ddo-case.invalid',
-      role: 'Admin, Yolcu',
-      status: 'Aktif (Seed Canary)',
-      created: '2026-10-01',
-    },
-    {
-      id: 'usr-2',
-      email: 'kontrolor@ddo-case.invalid',
-      role: 'Kontrolör',
-      status: 'Aktif',
-      created: '2026-10-01',
-    },
-    {
-      id: 'usr-3',
-      email: 'hatyoneticisi@ddo-case.invalid',
-      role: 'Hat Yöneticisi',
-      status: 'Aktif',
-      created: '2026-10-01',
-    },
-    {
-      id: 'usr-4',
-      email: 'muhasebe@ddo-case.invalid',
-      role: 'Muhasebe',
-      status: 'Aktif',
-      created: '2026-10-01',
-    },
-    {
-      id: 'usr-5',
-      email: 'operasyon@ddo-case.invalid',
-      role: 'Operasyon',
-      status: 'Aktif',
-      created: '2026-10-01',
-    },
-    {
-      id: 'usr-6',
-      email: 'admin@ddo-case.invalid',
-      role: 'Sistem Yöneticisi',
-      status: 'Aktif',
-      created: '2026-10-01',
-    },
-  ];
+  const [anomaliesError, setAnomaliesError] = useState('');
+  const [systemUsers, setSystemUsers] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [usersError, setUsersError] = useState('');
 
   const fetchHealth = async () => {
     setLoadingHealth(true);
@@ -65,15 +23,16 @@ export function AdminPortal({ token, onShowToast, onRolePreview, activeRole }) {
     try {
       const res = await api.getHealth();
       const latency = Math.round(performance.now() - start);
+      if (!res || !['UP', 'DOWN'].includes(res.status)) throw new Error('Sağlık yanıtı doğrulanamadı.');
       setHealthLatency(latency);
-      setLastHealthCheck(new Date().toLocaleTimeString('tr-TR'));
-      setHealthStatus(res || { status: 'healthy' });
-      if (onShowToast) onShowToast(`Sistem sağlık kontrolü başarılı (${latency} ms)`, 'success');
+      setLastHealthCheck(new Date().toISOString());
+      setHealthStatus(res);
+      if (onShowToast) onShowToast(res.status === 'UP' ? `API sağlık yanıtı alındı (${latency} ms)` : 'API sağlık kontrolü erişilemez durumu döndürdü.', res.status === 'UP' ? 'success' : 'error');
     } catch (err) {
       const latency = Math.round(performance.now() - start);
       setHealthLatency(latency);
-      setLastHealthCheck(new Date().toLocaleTimeString('tr-TR'));
-      setHealthStatus({ status: 'unreachable', error: err.message });
+      setLastHealthCheck(new Date().toISOString());
+      setHealthStatus({ status: 'DOWN', error: err.message });
       if (onShowToast) onShowToast(`Sağlık kontrolü hatası: ${err.message}`, 'error');
     } finally {
       setLoadingHealth(false);
@@ -82,19 +41,36 @@ export function AdminPortal({ token, onShowToast, onRolePreview, activeRole }) {
 
   const fetchAnomalies = async () => {
     setLoadingAnomalies(true);
+    setAnomaliesError('');
     try {
       const res = await api.getAnomalies(token);
       setAnomalies(Array.isArray(res) ? res : res?.anomalies || res?.items || []);
-    } catch {
+    } catch (err) {
       setAnomalies([]);
+      setAnomaliesError(err.message || 'Denetim günlüğü yüklenemedi.');
     } finally {
       setLoadingAnomalies(false);
+    }
+  };
+
+  const fetchUsers = async () => {
+    setLoadingUsers(true);
+    setUsersError('');
+    try {
+      const users = await api.getAdminUsers(token);
+      setSystemUsers(Array.isArray(users) ? users : []);
+    } catch (err) {
+      setSystemUsers([]);
+      setUsersError(err.message || 'Kullanıcı dizini yüklenemedi.');
+    } finally {
+      setLoadingUsers(false);
     }
   };
 
   useEffect(() => {
     fetchHealth();
     fetchAnomalies();
+    fetchUsers();
   }, [token]);
 
   return (
@@ -104,44 +80,23 @@ export function AdminPortal({ token, onShowToast, onRolePreview, activeRole }) {
         title="Admin Rol Paneli Önizleme Modu"
         subtitle="Yalnızca sistem yöneticisi için yetkili portal arayüzlerini doğrudan test ve teftiş etme aracı"
       >
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-muted font-medium mr-2">Önizleme Rolü:</span>
-          {[
-            { id: 'yolcu', label: 'Yolcu' },
-            { id: 'kontrolor', label: 'Kontrolör' },
-            { id: 'hat_yoneticisi', label: 'Hat Yöneticisi' },
-            { id: 'muhasebe', label: 'Muhasebe' },
-            { id: 'operasyon', label: 'Operasyon' },
-            { id: 'admin', label: 'Admin (Aktif)' },
-          ].map((r) => (
-            <Button
-              key={r.id}
-              variant={activeRole === r.id ? 'primary' : 'outline'}
-              size="sm"
-              onClick={() => onRolePreview && onRolePreview(r.id)}
-            >
-              {r.label}
-            </Button>
-          ))}
-        </div>
+        <label className="flex flex-col sm:flex-row sm:items-center gap-2 text-sm">
+          <span className="font-medium">Portal önizlemesi</span>
+          <select aria-label="Önizleme portalı seç" value={activeRole} onChange={(event) => onRolePreview?.(event.target.value)} className="input w-full sm:w-auto">
+            {[
+              ['admin', 'Sistem Yönetimi'], ['yolcu', 'Yolcu'], ['kontrolor', 'Kontrolör'],
+              ['hat_yoneticisi', 'Hat Yöneticisi'], ['muhasebe', 'Muhasebe'], ['operasyon', 'Operasyon'],
+            ].map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select>
+          <span className="text-xs text-muted">Yalnızca arayüz önizlemesidir; yetki vermez.</span>
+        </label>
       </Card>
 
-      {/* Mali Mutabakat ve Dönem Kapanış Denetimi Kısayolu */}
-      <div className="p-4 bg-surface-muted border border-border rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="p-4 bg-surface-muted border border-border rounded-lg">
         <div>
-          <h4 className="text-sm font-semibold text-foreground">Mali Mutabakat ve Dönem Kapanış Denetimi</h4>
-          <p className="text-xs text-muted">
-            İşletmeci gelir paylaşımı, dönem kapatma ve storno düzeltmelerini incelemek ve denetlemek için Muhasebe Portalı'na geçin.
-          </p>
+          <h4 className="text-sm font-semibold text-foreground">Mali mutabakat durumu</h4>
+          <p className="text-xs text-muted">Dönem kapama, yeniden açma ve storno geçmişi Muhasebe portalındaki gerçek denetim kayıtlarından görüntülenir.</p>
         </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => onRolePreview && onRolePreview('muhasebe')}
-          className="whitespace-nowrap"
-        >
-          📊 Muhasebe Portalına Git
-        </Button>
       </div>
 
       <div className="portal-header flex justify-between items-center">
@@ -162,42 +117,45 @@ export function AdminPortal({ token, onShowToast, onRolePreview, activeRole }) {
       </div>
 
       {/* KPI & Canary Diagnostic Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="kpi-card p-4 rounded-lg bg-surface border border-border">
+      <div className="admin-health-grid grid min-w-0 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
+        <div className="admin-health-card kpi-card min-w-0 p-4 rounded-lg bg-surface border border-border">
           <span className="text-xs text-muted block">API Sunucu Durumu</span>
-          <span className={`font-bold text-xl block mt-1 ${healthStatus?.status === 'unreachable' ? 'text-danger' : 'text-success'}`}>
-            {healthStatus?.status === 'unreachable' ? 'Erişilemiyor' : 'Aktif (200 OK)'}
+          <span className={`break-words font-bold text-lg sm:text-xl block mt-1 ${healthStatus?.status === 'UP' ? 'text-success' : healthStatus?.status === 'DOWN' ? 'text-danger' : 'text-muted'}`}>
+            {healthStatus?.status === 'UP' ? 'Aktif (200 OK)' : healthStatus?.status === 'DOWN' ? 'Erişilemiyor' : 'Doğrulanmadı'}
           </span>
-          <span className="text-xs text-muted block mt-1">
-            Gecikme: {healthLatency !== null ? `${healthLatency} ms` : '-'} {lastHealthCheck ? `(${lastHealthCheck})` : ''}
+          <span className="break-words text-xs text-muted block mt-2">
+            Gecikme: {healthLatency !== null ? `${healthLatency} ms` : 'ölçülmedi'} {lastHealthCheck ? `· Kontrol: ${formatDateTime(lastHealthCheck)}` : ''}
           </span>
         </div>
 
-        <div className="kpi-card p-4 rounded-lg bg-surface border border-border">
-          <span className="text-xs text-muted block">Veritabanı Motoru</span>
-          <span className="font-bold text-xl text-primary block mt-1">PostgreSQL 16</span>
-          <span className="text-xs text-muted block mt-1">Şema Öneki: jw_</span>
+        <div className="admin-health-card kpi-card min-w-0 p-4 rounded-lg bg-surface border border-border">
+          <span className="text-xs text-muted block">Veritabanı Bağlantısı</span>
+          <span className={`break-words font-bold text-lg sm:text-xl block mt-1 ${healthStatus?.database === 'healthy' ? 'text-success' : healthStatus?.status === 'DOWN' ? 'text-danger' : 'text-muted'}`}>
+            {healthStatus?.database || 'Doğrulanmadı'}
+          </span>
+          <span className="text-xs text-muted block mt-2">PostgreSQL 16 · Şema öneki jw_</span>
         </div>
 
-        <div className="kpi-card p-4 rounded-lg bg-surface border border-border">
+        <div className="admin-health-card kpi-card min-w-0 p-4 rounded-lg bg-surface border border-border">
           <span className="text-xs text-muted block">Finansal Defter Güvenliği</span>
-          <span className="font-bold text-xl text-success block mt-1">Append-Only</span>
-          <span className="text-xs text-muted block mt-1">Kuruş Bazlı İki Taraflı Kayıt</span>
+          <span className="break-words font-bold text-lg sm:text-xl text-muted block mt-1">Bu kontrolde ölçülmüyor</span>
+          <span className="text-xs text-muted block mt-2">Health endpoint ledger mutabakatı yapmaz.</span>
         </div>
 
-        <div className="kpi-card p-4 rounded-lg bg-surface border border-border">
-          <span className="text-xs text-muted block">Sistem Canari Durumu</span>
-          <span className="font-bold text-xl text-success block mt-1">7 / 7 Doğrulandı</span>
-          <span className="text-xs text-muted block mt-1">İnvariant Bütünlüğü Sağlandı</span>
+        <div className="admin-health-card kpi-card min-w-0 p-4 rounded-lg bg-surface border border-border">
+          <span className="text-xs text-muted block">Canary Durumu</span>
+          <span className="break-words font-bold text-lg sm:text-xl text-muted block mt-1">Bu kontrolde doğrulanmadı</span>
+          <span className="text-xs text-muted block mt-2">Sağlık yanıtı: {healthStatus?.timestamp ? formatDateTime(healthStatus.timestamp) : 'kayıt zamanı bulunamadı'}</span>
         </div>
       </div>
 
       {/* User and Role Directory */}
       <Card
         title="Sistem Kullanıcıları ve Yetki Matrisi"
-        subtitle="Platformda kayıtlı çekirdek roller ve çoklu yetki atamaları"
+        subtitle="Kullanıcılar ve birden çok rol, yetkili API yanıtından alınır"
+        action={<Button variant="outline" size="sm" onClick={fetchUsers} loading={loadingUsers}>Yenile</Button>}
       >
-        <Table
+        {usersError ? <p role="alert" className="text-sm text-danger">{usersError}</p> : <Table
           ariaLabel="Sistem Kullanıcıları Listesi"
           columns={[
             {
@@ -206,38 +164,25 @@ export function AdminPortal({ token, onShowToast, onRolePreview, activeRole }) {
               render: (row) => <span className="font-mono text-sm font-semibold">{row.email}</span>,
             },
             {
-              key: 'role',
+              key: 'roles',
               header: 'Sistem Rolü',
-              render: (row) => <span className="badge badge-primary">{row.role}</span>,
-            },
-            {
-              key: 'status',
-              header: 'Hesap Durumu',
-              render: (row) => (
-                <span className={`badge ${row.status.includes('Canary') ? 'badge-success' : 'badge-secondary'}`}>
-                  {row.status}
-                </span>
-              ),
+              render: (row) => <span className="badge badge-primary">{(row.roles || []).join(', ') || 'Rol yok'}</span>,
             },
             {
               key: 'created',
               header: 'Kayıt Tarihi',
-              render: (row) => <span className="text-sm text-muted">{row.created}</span>,
-            },
-            {
-              key: 'actions',
-              header: 'Durum',
-              render: () => <span className="badge badge-success">Yetkilendirildi</span>,
+              render: (row) => <span className="text-sm text-muted">{formatDate(row.created_at)}</span>,
             },
           ]}
           data={systemUsers}
-        />
+          loading={loadingUsers}
+        />}
       </Card>
 
       {/* Audit & Security Log Table */}
       <Card
-        title="Güvenlik ve Denetim Günlüğü (Audit Log)"
-        subtitle="Sistemde kaydedilen son turnike telemetri anomalileri ve idari işlemler"
+        title="Güvenlik ve Denetim Günlüğü"
+        subtitle="Kalıcı güvenlik anomalileri gerçek tespit zamanlarıyla gösterilir"
         action={
           <Button
             variant="outline"
@@ -249,29 +194,20 @@ export function AdminPortal({ token, onShowToast, onRolePreview, activeRole }) {
           </Button>
         }
       >
-        {anomalies.length > 0 ? (
+        {anomaliesError ? <p role="alert" className="text-sm text-danger">{anomaliesError}</p> : anomalies.length > 0 ? (
           <Table
             ariaLabel="Güvenlik Denetim Günlüğü"
             columns={[
               { key: 'id', header: 'Kayıt ID', render: (row) => <span className="font-mono text-xs">{row.id}</span> },
-              { key: 'created_at', header: 'Tarih / Saat', render: (row) => formatDate(row.created_at || row.timestamp) },
-              { key: 'anomaly_type', header: 'Olay Türü', render: (row) => <span className="badge badge-warning">{row.anomaly_type || 'GÜVENLİK'}</span> },
+              { key: 'detected_at', header: 'Tarih / Saat', render: (row) => row.detected_at || row.created_at || row.timestamp ? formatDateTime(row.detected_at || row.created_at || row.timestamp) : 'Kayıt zamanı bulunamadı' },
+              { key: 'anomaly_type', header: 'Olay Türü', render: (row) => <span className="badge badge-warning">{row.anomaly_type || 'Olay türü bilinmiyor'}</span> },
               { key: 'description', header: 'Açıklama', render: (row) => <span className="text-sm">{row.description || row.message}</span> },
-              {
-                key: 'severity',
-                header: 'Önem',
-                render: (row) => (
-                  <span className={`badge ${row.severity === 'CRITICAL' ? 'badge-danger' : 'badge-warning'}`}>
-                    {row.severity || 'ORTA'}
-                  </span>
-                ),
-              },
             ]}
             data={anomalies}
           />
         ) : (
-          <div className="text-center py-6 text-muted">
-            <p className="text-sm">Şu anda kayıtlı bir kritik güvenlik anomalisi bulunmamaktadır. Tüm validatörler normal çalışmaktadır.</p>
+          <div className="text-center py-6 text-muted" role={loadingAnomalies ? 'status' : undefined}>
+            <p className="text-sm">{loadingAnomalies ? 'Güvenlik günlüğü yükleniyor…' : 'Kayıtlı güvenlik anomalisi bulunmuyor.'}</p>
           </div>
         )}
       </Card>

@@ -1,0 +1,7 @@
+*.csv text eol=lf
+*.csv whitespace=-blank-at-eol
+web/android/** text eol=lf
+web/android/gradlew.bat text eol=crlf
+.agents/**/*.md whitespace=-blank-at-eol,-blank-at-eof
+IMPLEMENTATION_HANDOFF.md whitespace=-blank-at-eol,-blank-at-eof
+qa/reports/*.md whitespace=-blank-at-eol,-blank-at-eof

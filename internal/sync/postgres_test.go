@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mamyylmz/AktarBilet/internal/domain"
 	"github.com/mamyylmz/AktarBilet/internal/ledger"
@@ -40,12 +41,17 @@ func TestSyncService_LivePersistentIngest(t *testing.T) {
 	syncSvc.SetPool(pool)
 
 	nowNano := time.Now().UnixNano()
-	cardID := fmt.Sprintf("CARD_SYNC_PG_%d", nowNano%1000000)
-	_, _ = pool.Exec(ctx, `
+	cardID := "CARD_SYNC_PG_" + uuid.NewString()
+	_, err := pool.Exec(ctx, `
 		INSERT INTO jw_cards (id, card_type, balance_kurus, is_blacklisted, created_at, updated_at)
-		VALUES ($1, 'tam', 20000, false, NOW(), NOW())
-		ON CONFLICT (id) DO UPDATE SET balance_kurus = 20000, is_blacklisted = false
+		VALUES ($1, 'tam', 0, false, NOW(), NOW())
 	`, cardID)
+	if err != nil {
+		t.Fatalf("Persistent sync test kartı oluşturulamadı: %v", err)
+	}
+	if _, err = ledSvc.Recharge(ctx, cardID, 20000, "SYNC_OPEN_"+uuid.NewString(), "Persistent sync test açılış bakiyesi"); err != nil {
+		t.Fatalf("Persistent sync test açılış bakiyesi ledger'a yazılamadı: %v", err)
+	}
 
 	t0 := time.Date(2026, 10, 24, 14, 0, 0, 0, time.UTC)
 	key1 := fmt.Sprintf("SYNC_KEY_%d", nowNano)
@@ -55,8 +61,8 @@ func TestSyncService_LivePersistentIngest(t *testing.T) {
 		ValidatorID:    "VAL_500T_01",
 		SequenceNo:     seq1,
 		CardID:         cardID,
-		LineID:         "LINE_500T",
-		StationID:      "STAT_AYRILIK",
+		LineID:         "LINE_5",
+		StationID:      "STAT_ESHOT_10177",
 		Direction:      1,
 		TappedAt:       t0,
 	}
@@ -86,8 +92,8 @@ func TestSyncService_LivePersistentIngest(t *testing.T) {
 		ValidatorID:    "VAL_14ES_01",
 		SequenceNo:     seq1 + 1,
 		CardID:         cardID,
-		LineID:         "LINE_14ES",
-		StationID:      "STAT_KADIKOY",
+		LineID:         "LINE_10",
+		StationID:      "STAT_ESHOT_10145",
 		Direction:      1,
 		TappedAt:       t0.Add(15 * time.Minute),
 	}

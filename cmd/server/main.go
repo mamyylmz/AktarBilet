@@ -17,7 +17,6 @@ import (
 	"github.com/mamyylmz/AktarBilet/internal/api"
 	"github.com/mamyylmz/AktarBilet/internal/auth"
 	"github.com/mamyylmz/AktarBilet/internal/config"
-	"github.com/mamyylmz/AktarBilet/internal/domain"
 	"github.com/mamyylmz/AktarBilet/internal/ledger"
 	"github.com/mamyylmz/AktarBilet/internal/pricing"
 	"github.com/mamyylmz/AktarBilet/internal/seed"
@@ -36,6 +35,11 @@ func main() {
 
 	// 2. Konfigürasyonu yükle
 	cfg := config.Load()
+
+	if cfg.Environment == "production" && (cfg.JWTSecret == "super-secret-jwt-key-ddo-aktarbilet-2026" || len(cfg.JWTSecret) < 32) {
+		slog.Error("FATAL GÜVENLİK HATASI: Üretim ortamında varsayılan veya zayıf (<32 karakter) JWT_SECRET kabul edilemez! Sunucu fail-closed modunda durduruluyor.")
+		os.Exit(1)
+	}
 
 	deviceCredentials, err := sync.LoadDeviceCredentials(cfg.ValidatorCredentialsFile)
 	if err != nil {
@@ -91,8 +95,9 @@ func main() {
 		ledgerSvc = ledger.NewPostgresLedger(pool)
 	} else {
 		mem := ledger.NewMemoryLedger()
-		mem.RegisterCard(domain.Card{ID: "CARD_YOLCU_001", BalanceKurus: 50000, CardType: domain.CardTypeTam})
-		mem.RegisterCard(domain.Card{ID: "CARD_TAM_001", BalanceKurus: 50000, CardType: domain.CardTypeTam})
+		for _, card := range seed.DefaultDemoCards(nil) {
+			mem.RegisterCard(card)
+		}
 		ledgerSvc = mem
 	}
 
@@ -103,11 +108,15 @@ func main() {
 	settleSvc := settlement.NewSettlementService()
 	anomalyDet := anomaly.NewAnomalyDetector()
 
-	// Durakları anomaly detector'e tanıt
-	anomalyDet.RegisterStation(anomaly.StationCoordinate{ID: "STAT_KADIKOY", Name: "Kadıköy İskele", Latitude: 40.9904, Longitude: 29.0254})
-	anomalyDet.RegisterStation(anomaly.StationCoordinate{ID: "STAT_EMINONU", Name: "Eminönü", Latitude: 41.0175, Longitude: 28.9734})
-	anomalyDet.RegisterStation(anomaly.StationCoordinate{ID: "STAT_KABATAS", Name: "Kabataş", Latitude: 41.0355, Longitude: 28.9922})
-	anomalyDet.RegisterStation(anomaly.StationCoordinate{ID: "STAT_SARIYER", Name: "Sarıyer", Latitude: 41.1685, Longitude: 29.0554})
+	// Seed validators use official ESHOT stop coordinates for anomaly distance checks.
+	validatorStops := map[string]bool{"STAT_ESHOT_10177": true, "STAT_ESHOT_10145": true, "STAT_ESHOT_10008": true, "STAT_ESHOT_10255": true}
+	for _, station := range seed.DefaultSeedStations() {
+		if validatorStops[station.ID] {
+			anomalyDet.RegisterStation(anomaly.StationCoordinate{
+				ID: station.ID, Name: station.Name, Latitude: station.Latitude, Longitude: station.Longitude,
+			})
+		}
+	}
 
 	// 5. API Yönlendirici ve HTTP Sunucu
 	deviceAuth := sync.NewDeviceAuthManager(deviceCredentials, pool)
@@ -181,6 +190,9 @@ func runMigrationsAndSeed(pool *pgxpool.Pool, jwtSecret string, deviceCredential
 		{"007", "migrations/007_approval_capacity_constraint.sql"},
 		{"008", "migrations/008_multi_role_support.sql"},
 		{"009", "migrations/009_fix_batch_device_nonce.sql"},
+		{"010", "migrations/010_settlement_ledger_idempotency.sql"},
+		{"011", "migrations/011_settlement_adjustments.sql"},
+		{"012", "migrations/012_active_station_catalog.sql"},
 	}
 
 	for _, m := range migrations {

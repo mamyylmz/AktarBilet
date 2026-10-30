@@ -1,6 +1,6 @@
 // AktarBilet Centralized REST API Service Client
 
-const BASE_URL = '';
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 /**
  * Perform an authenticated HTTP request with JSON parsing and standardized error handling
@@ -66,6 +66,10 @@ export const api = {
     return request(`/api/v1/cards/${cardId}`, { method: 'GET', token });
   },
 
+  getCardSnapshot: async (cardId, token) => {
+    return request(`/api/v1/cards/${cardId}/snapshot`, { method: 'GET', token });
+  },
+
   rechargeCard: async (cardId, amountKurus, description, token, idempotencyKey) => {
     return request(`/api/v1/cards/${cardId}/recharge`, {
       method: 'POST',
@@ -112,6 +116,8 @@ export const api = {
     return request('/api/v1/settlements', { method: 'GET', token });
   },
 
+  getAdminUsers: async (token) => request('/api/v1/admin/users', { method: 'GET', token }),
+
   closeSettlementPeriod: async (periodName, token) => {
     return request('/api/v1/settlements/close', {
       method: 'POST',
@@ -148,6 +154,13 @@ export const api = {
       }),
     });
   },
+
+  addSettlementSubsidy: async (adjustment, token, idempotencyKey) => request('/api/v1/settlements/adjustments/subsidy', {
+    method: 'POST',
+    token,
+    headers: { 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(adjustment),
+  }),
 
   // 6. Hat Yöneticisi & Optimizasyon
   getLineFinancials: async (token) => {

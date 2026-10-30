@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -33,13 +34,18 @@ func TestPostgresLedger_LiveDBOperations(t *testing.T) {
 	ctx := context.Background()
 	pl := NewPostgresLedger(pool)
 
-	cardID := "CARD_PG_TEST_001"
-	// Test kartı oluştur
-	_, _ = pool.Exec(ctx, `
+	cardID := "CARD_PG_TEST_" + uuid.NewString()
+	// Test kartını ve başlangıç bakiyesini ledger üzerinden oluştur.
+	_, err := pool.Exec(ctx, `
 		INSERT INTO jw_cards (id, card_type, balance_kurus, is_blacklisted, created_at, updated_at)
-		VALUES ($1, 'tam', 10000, false, NOW(), NOW())
-		ON CONFLICT (id) DO UPDATE SET balance_kurus = 10000, is_blacklisted = false
+		VALUES ($1, 'tam', 0, false, NOW(), NOW())
 	`, cardID)
+	if err != nil {
+		t.Fatalf("Test kartı oluşturulamadı: %v", err)
+	}
+	if _, err = pl.Recharge(ctx, cardID, 10000, "PG_OPEN_"+uuid.NewString(), "PG test açılış bakiyesi"); err != nil {
+		t.Fatalf("Test açılış bakiyesi ledger'a yazılamadı: %v", err)
+	}
 
 	// 1. GetCardBalance
 	bal, err := pl.GetCardBalance(ctx, cardID)
@@ -119,16 +125,18 @@ func TestPostgresLedger_InsufficientBalanceAndBlacklist(t *testing.T) {
 	ctx := context.Background()
 	pl := NewPostgresLedger(pool)
 
-	cardID := "CARD_PG_LIMIT_001"
-	_, _ = pool.Exec(ctx, `
+	cardID := "CARD_PG_LIMIT_" + uuid.NewString()
+	_, err := pool.Exec(ctx, `
 		INSERT INTO jw_cards (id, card_type, balance_kurus, is_blacklisted, created_at, updated_at)
 		VALUES ($1, 'tam', 0, false, NOW(), NOW())
-		ON CONFLICT (id) DO UPDATE SET balance_kurus = 0, is_blacklisted = false
 	`, cardID)
+	if err != nil {
+		t.Fatalf("Limit test kartı oluşturulamadı: %v", err)
+	}
 
 	// Bakiye 0. 50 TL tolerans limiti var. 60 TL biniş reddedilmeli
 	refBad := fmt.Sprintf("PG_BAD_%d", time.Now().UnixNano())
-	_, err := pl.ProcessTap(ctx, cardID, 6000, refBad, "Aşırı biniş", 5000)
+	_, err = pl.ProcessTap(ctx, cardID, 6000, refBad, "Aşırı biniş", 5000)
 	if err != ErrInsufficientBalance {
 		t.Fatalf("Limit aşımında ErrInsufficientBalance bekleniyordu, alınan: %v", err)
 	}

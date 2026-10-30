@@ -194,10 +194,14 @@ func TestLedger_EdgeCasesAndValidation(t *testing.T) {
 		t.Fatalf("Sıfır stornoda ErrInvalidAmount bekleniyordu, alınan: %v", err)
 	}
 
-	// 4. Biniş sıfır veya negatif
-	_, err = svc.ProcessTap(ctx, cardID, 0, "REF_BAD_4", "Sıfır biniş", 0)
+	// Ücretsiz kart ve aylık tavanı dolmuş kart sıfır ücretle binebilir.
+	entry, err := svc.ProcessTap(ctx, cardID, 0, "REF_FREE_1", "Ücretsiz kart binişi", 0)
+	if err != nil || entry == nil || entry.AmountKurus != 0 || entry.BalanceAfterKurus != 10000 {
+		t.Fatalf("Sıfır ücretli biniş bakiyeyi koruyarak kaydedilmeliydi: entry=%+v err=%v", entry, err)
+	}
+	_, err = svc.ProcessTap(ctx, cardID, -1, "REF_BAD_4", "Negatif ücret", 0)
 	if err != ErrInvalidAmount {
-		t.Fatalf("Sıfır binişte ErrInvalidAmount bekleniyordu, alınan: %v", err)
+		t.Fatalf("Negatif binişte ErrInvalidAmount bekleniyordu, alınan: %v", err)
 	}
 
 	// 5. Olmayan kart
@@ -343,6 +347,21 @@ func (s *mockStarter) QueryRow(ctx context.Context, sql string, args ...any) pgx
 
 func TestPostgresLedger_MockOperations(t *testing.T) {
 	ctx := context.Background()
+	noLedgerEntry := func() pgx.Row {
+		return &mockLedgerRow{scanFunc: func(dest ...any) error { return pgx.ErrNoRows }}
+	}
+	cardLockRow := func(blacklisted bool) pgx.Row {
+		return &mockLedgerRow{scanFunc: func(dest ...any) error {
+			*(dest[0].(*bool)) = blacklisted
+			return nil
+		}}
+	}
+	ledgerBalanceRow := func(balance domain.Kurus) pgx.Row {
+		return &mockLedgerRow{scanFunc: func(dest ...any) error {
+			*(dest[0].(*domain.Kurus)) = balance
+			return nil
+		}}
+	}
 
 	// 1. Constructor test
 	pNil := NewPostgresLedger(nil)
@@ -356,14 +375,14 @@ func TestPostgresLedger_MockOperations(t *testing.T) {
 
 	// 2. ProcessTap - Normal flow
 	tx.queryRowFunc = func(sql string, args ...any) pgx.Row {
+		if strings.Contains(sql, "WHERE reference_id") {
+			return noLedgerEntry()
+		}
 		if strings.Contains(sql, "FROM jw_cards") {
-			return &mockLedgerRow{
-				scanFunc: func(dest ...any) error {
-					*(dest[0].(*domain.Kurus)) = 10000
-					*(dest[1].(*bool)) = false
-					return nil
-				},
-			}
+			return cardLockRow(false)
+		}
+		if strings.Contains(sql, "SUM(amount_kurus)") {
+			return ledgerBalanceRow(10000)
 		}
 		if strings.Contains(sql, "INSERT INTO jw_ledger") {
 			return &mockLedgerRow{
@@ -373,7 +392,7 @@ func TestPostgresLedger_MockOperations(t *testing.T) {
 				},
 			}
 		}
-		return &mockLedgerRow{scanFunc: func(dest ...any) error { return errors.New("no rows") }}
+		return noLedgerEntry()
 	}
 
 	entry, err := p.ProcessTap(ctx, "CARD_MOCK_1", 2000, "REF_TAP_MOCK", "Mock tap", 0)
@@ -386,16 +405,16 @@ func TestPostgresLedger_MockOperations(t *testing.T) {
 
 	// 3. ProcessTap - Blacklist error
 	tx.queryRowFunc = func(sql string, args ...any) pgx.Row {
-		if strings.Contains(sql, "FROM jw_cards") {
-			return &mockLedgerRow{
-				scanFunc: func(dest ...any) error {
-					*(dest[0].(*domain.Kurus)) = 10000
-					*(dest[1].(*bool)) = true
-					return nil
-				},
-			}
+		if strings.Contains(sql, "WHERE reference_id") {
+			return noLedgerEntry()
 		}
-		return &mockLedgerRow{scanFunc: func(dest ...any) error { return errors.New("no rows") }}
+		if strings.Contains(sql, "FROM jw_cards") {
+			return cardLockRow(true)
+		}
+		if strings.Contains(sql, "SUM(amount_kurus)") {
+			return ledgerBalanceRow(10000)
+		}
+		return noLedgerEntry()
 	}
 	_, err = p.ProcessTap(ctx, "CARD_MOCK_1", 2000, "REF_TAP_MOCK_2", "Mock tap", 0)
 	if err != ErrCardBlacklisted {
@@ -404,16 +423,16 @@ func TestPostgresLedger_MockOperations(t *testing.T) {
 
 	// 4. ProcessTap - Insufficient balance error
 	tx.queryRowFunc = func(sql string, args ...any) pgx.Row {
-		if strings.Contains(sql, "FROM jw_cards") {
-			return &mockLedgerRow{
-				scanFunc: func(dest ...any) error {
-					*(dest[0].(*domain.Kurus)) = 1000
-					*(dest[1].(*bool)) = false
-					return nil
-				},
-			}
+		if strings.Contains(sql, "WHERE reference_id") {
+			return noLedgerEntry()
 		}
-		return &mockLedgerRow{scanFunc: func(dest ...any) error { return errors.New("no rows") }}
+		if strings.Contains(sql, "FROM jw_cards") {
+			return cardLockRow(false)
+		}
+		if strings.Contains(sql, "SUM(amount_kurus)") {
+			return ledgerBalanceRow(1000)
+		}
+		return noLedgerEntry()
 	}
 	_, err = p.ProcessTap(ctx, "CARD_MOCK_1", 2000, "REF_TAP_MOCK_3", "Mock tap", 0)
 	if err != ErrInsufficientBalance {
@@ -422,13 +441,14 @@ func TestPostgresLedger_MockOperations(t *testing.T) {
 
 	// 5. Recharge - Normal flow
 	tx.queryRowFunc = func(sql string, args ...any) pgx.Row {
+		if strings.Contains(sql, "WHERE reference_id") {
+			return noLedgerEntry()
+		}
 		if strings.Contains(sql, "FROM jw_cards") {
-			return &mockLedgerRow{
-				scanFunc: func(dest ...any) error {
-					*(dest[0].(*domain.Kurus)) = 5000
-					return nil
-				},
-			}
+			return cardLockRow(false)
+		}
+		if strings.Contains(sql, "SUM(amount_kurus)") {
+			return ledgerBalanceRow(5000)
 		}
 		if strings.Contains(sql, "INSERT INTO jw_ledger") {
 			return &mockLedgerRow{
@@ -438,7 +458,7 @@ func TestPostgresLedger_MockOperations(t *testing.T) {
 				},
 			}
 		}
-		return &mockLedgerRow{scanFunc: func(dest ...any) error { return errors.New("no rows") }}
+		return noLedgerEntry()
 	}
 	recEntry, err := p.Recharge(ctx, "CARD_MOCK_1", 5000, "REF_REC_MOCK", "Mock recharge")
 	if err != nil {

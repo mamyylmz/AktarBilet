@@ -12,7 +12,7 @@ import (
 func setupTestStations(detector *AnomalyDetector) {
 	// Kadıköy İskelesi (40.9904, 29.0254)
 	detector.RegisterStation(StationCoordinate{
-		ID:        "STAT_KADIKOY",
+		ID:        "STAT_ESHOT_10145",
 		Name:      "Kadıköy İskele",
 		Latitude:  40.9904,
 		Longitude: 29.0254,
@@ -20,7 +20,7 @@ func setupTestStations(detector *AnomalyDetector) {
 
 	// Ayrılık Çeşmesi (40.9982, 29.0305) ~1.0 km
 	detector.RegisterStation(StationCoordinate{
-		ID:        "STAT_AYRILIK",
+		ID:        "STAT_ESHOT_10177",
 		Name:      "Ayrılık Çeşmesi",
 		Latitude:  40.9982,
 		Longitude: 29.0305,
@@ -45,7 +45,7 @@ func TestAnomaly_ImpossibleSpeed(t *testing.T) {
 	evID1 := uuid.New()
 
 	// 1. Kadıköy'de biniş (10:00:00)
-	res1 := detector.CheckTap(ctx, cardID, "STAT_KADIKOY", t1, &evID1)
+	res1 := detector.CheckTap(ctx, cardID, "STAT_ESHOT_10145", t1, &evID1)
 	if res1.IsAnomaly {
 		t.Fatalf("İlk biniş anomali olmamalı")
 	}
@@ -76,12 +76,12 @@ func TestAnomaly_NormalTravel(t *testing.T) {
 	evID1 := uuid.New()
 
 	// Kadıköy (10:00:00)
-	detector.CheckTap(ctx, cardID, "STAT_KADIKOY", t1, &evID1)
+	detector.CheckTap(ctx, cardID, "STAT_ESHOT_10145", t1, &evID1)
 
 	// Ayrılık Çeşmesi 8 dakika sonra (10:08:00) - Mesafe: ~1 km, Hız: ~7.5 km/s -> Normal
 	t2 := t1.Add(8 * time.Minute)
 	evID2 := uuid.New()
-	res2 := detector.CheckTap(ctx, cardID, "STAT_AYRILIK", t2, &evID2)
+	res2 := detector.CheckTap(ctx, cardID, "STAT_ESHOT_10177", t2, &evID2)
 
 	if res2.IsAnomaly {
 		t.Fatalf("Normal seyahat hızı anomali olarak işaretlenmemeli: %+v", res2)
@@ -98,7 +98,7 @@ func BenchmarkAnomaly_HighThroughput1MPerHour(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		detector.CheckTap(ctx, "BENCH_CARD", "STAT_AYRILIK", t0.Add(time.Duration(i)*time.Second), &evID)
+		detector.CheckTap(ctx, "BENCH_CARD", "STAT_ESHOT_10177", t0.Add(time.Duration(i)*time.Second), &evID)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestAnomaly_GetAnomalies(t *testing.T) {
 	cardID := "CARD_ANOMALY_LIST"
 	t1 := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 	evID1 := uuid.New()
-	detector.CheckTap(ctx, cardID, "STAT_KADIKOY", t1, &evID1)
+	detector.CheckTap(ctx, cardID, "STAT_ESHOT_10145", t1, &evID1)
 
 	// Anomali binişi: 3 dakika sonra Sarıyer
 	t2 := t1.Add(3 * time.Minute)

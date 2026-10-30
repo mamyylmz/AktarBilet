@@ -265,7 +265,7 @@ func (s *SyncService) ingestPersistent(ctx context.Context, pool SyncDBPool, req
 					)
 					correction := fe.fare - futureCalc.FareChargedKurus
 					if correction != 0 {
-						ref := fmt.Sprintf("OOO-REPRICE:%s", fe.id)
+						ref := fmt.Sprintf("OOO-REPRICE:%s:%s", fe.id, req.IdempotencyKey)
 						if _, err := s.ledgerService.StornoCorrection(ctx, req.CardID, correction, ref, "Sırasız olay kronolojik ücret uzlaşması"); err != nil && !errors.Is(err, ledger.ErrIdempotencyConflict) {
 							return nil, fmt.Errorf("sırasız olay defter uzlaşması başarısız: %w", err)
 						}

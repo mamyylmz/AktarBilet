@@ -30,7 +30,7 @@ func TestT1_PropertyAndFuzz_1000Cases(t *testing.T) {
 	// Deterministik tohum (Seed = 42)
 	rng := rand.New(rand.NewSource(42))
 
-	lines := []string{"LINE_500T", "LINE_14ES", "LINE_T1", "LINE_VAPUR", "LINE_M4", "LINE_35", "LINE_800"}
+	lines := []string{"LINE_5", "LINE_10", "LINE_15", "LINE_VAPUR", "LINE_M4", "LINE_35", "LINE_800"}
 	stations := []string{"STAT_A", "STAT_B", "STAT_C", "STAT_D", "STAT_E", "STAT_F"}
 	cardTypes := []domain.CardType{domain.CardTypeTam, domain.CardTypeOgrenci, domain.CardTypeYasli, domain.CardTypeUcretsiz}
 

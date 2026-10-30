@@ -34,6 +34,7 @@ type APIDBPool interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
 type APIHandler struct {
@@ -48,6 +49,21 @@ type APIHandler struct {
 	deviceAuth    *sync.DeviceAuthManager
 	memMu         gosync.RWMutex
 	memPenalties  []domain.Penalty
+}
+
+func demoPassengerCardID(email string) string {
+	switch email {
+	case "yolcu@aktarbilet.gov.tr":
+		return "CARD_YOLCU_001"
+	case "ogrenci.demo@aktarbilet.gov.tr":
+		return "CARD_DEMO_OGRENCI_001"
+	case "yasli.demo@aktarbilet.gov.tr":
+		return "CARD_DEMO_YASLI_001"
+	case "ucretsiz.demo@aktarbilet.gov.tr":
+		return "CARD_DEMO_UCRETSIZ_001"
+	default:
+		return ""
+	}
 }
 
 func NewAPIHandler(
@@ -317,7 +333,69 @@ func (h *APIHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claims := claimsVal.(*auth.Claims)
-	WriteJSON(w, http.StatusOK, claims)
+	var cardID *string
+	if h.pool != nil {
+		var ownedCardID string
+		err := h.pool.QueryRow(r.Context(), `
+			SELECT id FROM jw_cards WHERE user_id = $1 ORDER BY created_at, id LIMIT 1
+		`, claims.UserID).Scan(&ownedCardID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Hesaba bağlı kart bilgisi okunamadı")
+			return
+		}
+		if err == nil {
+			cardID = &ownedCardID
+		}
+	} else if claims.Role == domain.RoleYolcu {
+		if ownedCardID := demoPassengerCardID(claims.Email); ownedCardID != "" {
+			cardID = &ownedCardID
+		}
+	}
+	WriteJSON(w, http.StatusOK, struct {
+		*auth.Claims
+		CardID *string `json:"card_id,omitempty"`
+	}{Claims: claims, CardID: cardID})
+}
+
+// ListAdminUsers exposes the real account and role matrix to administrators only.
+func (h *APIHandler) ListAdminUsers(w http.ResponseWriter, r *http.Request) {
+	if h.pool == nil {
+		WriteError(w, http.StatusServiceUnavailable, "DATABASE_UNAVAILABLE", "Kullanıcı dizini kullanılamıyor")
+		return
+	}
+	rows, err := h.pool.Query(r.Context(), `
+		SELECT u.id, u.email, u.full_name, u.created_at,
+		       COALESCE(array_agg(ur.role ORDER BY ur.role) FILTER (WHERE ur.role IS NOT NULL), ARRAY[]::varchar[]) AS roles
+		FROM jw_tf_users u
+	LEFT JOIN jw_user_roles ur ON ur.user_id = u.id
+	GROUP BY u.id, u.email, u.full_name, u.created_at
+	ORDER BY u.email`)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Kullanıcı dizini okunamadı")
+		return
+	}
+	defer rows.Close()
+	type adminUser struct {
+		ID        uuid.UUID `json:"id"`
+		Email     string    `json:"email"`
+		FullName  string    `json:"full_name"`
+		CreatedAt time.Time `json:"created_at"`
+		Roles     []string  `json:"roles"`
+	}
+	users := make([]adminUser, 0)
+	for rows.Next() {
+		var user adminUser
+		if err := rows.Scan(&user.ID, &user.Email, &user.FullName, &user.CreatedAt, &user.Roles); err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Kullanıcı dizini okunamadı")
+			return
+		}
+		users = append(users, user)
+	}
+	if err := rows.Err(); err != nil {
+		WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Kullanıcı dizini okunamadı")
+		return
+	}
+	WriteJSON(w, http.StatusOK, users)
 }
 
 // 3. F-1: Kart ve Bakiye Yönetimi
@@ -341,8 +419,15 @@ func (h *APIHandler) GetCard(w http.ResponseWriter, r *http.Request) {
 
 	if h.pool != nil {
 		var bal domain.Kurus
+		var cardType string
 		var cardUserID *uuid.UUID
-		err := h.pool.QueryRow(r.Context(), "SELECT balance_kurus, user_id FROM jw_cards WHERE id = $1", cardID).Scan(&bal, &cardUserID)
+		err := h.pool.QueryRow(r.Context(), `
+			SELECT c.card_type, COALESCE(SUM(l.amount_kurus), 0), c.user_id
+			FROM jw_cards c
+			LEFT JOIN jw_ledger l ON l.card_id = c.id
+			WHERE c.id = $1
+			GROUP BY c.id, c.card_type, c.user_id
+		`, cardID).Scan(&cardType, &bal, &cardUserID)
 		if err != nil {
 			WriteError(w, http.StatusNotFound, "CARD_NOT_FOUND", "Kart bulunamadı")
 			return
@@ -358,6 +443,7 @@ func (h *APIHandler) GetCard(w http.ResponseWriter, r *http.Request) {
 
 		WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"card_id":       cardID,
+			"card_type":     cardType,
 			"balance_kurus": bal,
 			"balance_tl":    bal.FormatTL(),
 		})
@@ -372,7 +458,7 @@ func (h *APIHandler) GetCard(w http.ResponseWriter, r *http.Request) {
 
 	// In-memory IDOR kontrolü: Yolcu yalnızca kendi kartını görebilir
 	if claims != nil && claims.Role == domain.RoleYolcu {
-		if cardID != "CARD_YOLCU_001" {
+		if cardID != demoPassengerCardID(claims.Email) || cardID == "" {
 			WriteError(w, http.StatusForbidden, "FORBIDDEN", "Bu karta erişim yetkiniz bulunmamaktadır")
 			return
 		}
@@ -382,6 +468,72 @@ func (h *APIHandler) GetCard(w http.ResponseWriter, r *http.Request) {
 		"card_id":       cardID,
 		"balance_kurus": bal,
 		"balance_tl":    bal.FormatTL(),
+	})
+}
+
+// GetCardSnapshot returns the card balance and its ledger from one PostgreSQL statement snapshot.
+func (h *APIHandler) GetCardSnapshot(w http.ResponseWriter, r *http.Request) {
+	cardID := chi.URLParam(r, "id")
+	claimsVal := r.Context().Value(UserContextKey)
+	if claimsVal == nil {
+		WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Oturum açmanız gerekmektedir")
+		return
+	}
+	claims := claimsVal.(*auth.Claims)
+	if h.pool == nil {
+		balance, err := h.ledgerSvc.GetCardBalance(r.Context(), cardID)
+		if err != nil {
+			WriteError(w, http.StatusNotFound, "CARD_NOT_FOUND", "Kart bulunamadı")
+			return
+		}
+		if claims.Role == domain.RoleYolcu && (cardID != demoPassengerCardID(claims.Email) || cardID == "") {
+			WriteError(w, http.StatusForbidden, "FORBIDDEN", "Bu karta erişim yetkiniz bulunmamaktadır")
+			return
+		}
+		entries, err := h.ledgerSvc.GetCardLedger(r.Context(), cardID)
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "LEDGER_ERROR", "Kart defteri okunamadı")
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"card_id": cardID, "balance_kurus": balance, "ledger": entries})
+		return
+	}
+
+	var cardType string
+	var balance int64
+	var cardUserID *uuid.UUID
+	var ledgerJSON []byte
+	err := h.pool.QueryRow(r.Context(), `
+		SELECT c.card_type, COALESCE(SUM(l.amount_kurus), 0), c.user_id,
+		       COALESCE(json_agg(json_build_object(
+		           'id', l.id, 'card_id', l.card_id, 'entry_type', l.entry_type,
+		           'amount_kurus', l.amount_kurus, 'balance_after_kurus', l.balance_after_kurus,
+		           'reference_id', l.reference_id, 'description', l.description, 'created_at', l.created_at
+		       ) ORDER BY l.created_at DESC, l.id DESC) FILTER (WHERE l.id IS NOT NULL), '[]'::json)::text
+		FROM jw_cards c
+		LEFT JOIN jw_ledger l ON l.card_id = c.id
+		WHERE c.id = $1
+		GROUP BY c.id, c.card_type, c.user_id
+	`, cardID).Scan(&cardType, &balance, &cardUserID, &ledgerJSON)
+	if errors.Is(err, pgx.ErrNoRows) {
+		WriteError(w, http.StatusNotFound, "CARD_NOT_FOUND", "Kart bulunamadı")
+		return
+	}
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Kart bakiyesi ve hareketleri okunamadı")
+		return
+	}
+	if claims.Role == domain.RoleYolcu && (cardUserID == nil || *cardUserID != claims.UserID) {
+		WriteError(w, http.StatusForbidden, "FORBIDDEN", "Bu karta erişim yetkiniz bulunmamaktadır")
+		return
+	}
+	var entries []domain.LedgerEntry
+	if err := json.Unmarshal(ledgerJSON, &entries); err != nil {
+		WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Kart hareketleri çözümlenemedi")
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"card_id": cardID, "card_type": cardType, "balance_kurus": domain.Kurus(balance), "ledger": entries,
 	})
 }
 
@@ -433,7 +585,7 @@ func (h *APIHandler) RechargeCard(w http.ResponseWriter, r *http.Request) {
 				WriteError(w, http.StatusForbidden, "FORBIDDEN", "Yalnızca kendinize ait kartlara dolum yapabilirsiniz")
 				return
 			}
-		} else if cardID != "CARD_YOLCU_001" {
+		} else if cardID != demoPassengerCardID(claims.Email) || cardID == "" {
 			WriteError(w, http.StatusForbidden, "FORBIDDEN", "Yalnızca kendinize ait kartlara dolum yapabilirsiniz")
 			return
 		}
@@ -499,7 +651,7 @@ func (h *APIHandler) GetCardLedger(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		if claims != nil && claims.Role == domain.RoleYolcu {
-			if cardID != "CARD_YOLCU_001" {
+			if cardID != demoPassengerCardID(claims.Email) || cardID == "" {
 				WriteError(w, http.StatusForbidden, "FORBIDDEN", "Bu kartın defterine erişim yetkiniz bulunmamaktadır")
 				return
 			}
@@ -560,11 +712,7 @@ func (h *APIHandler) ProcessTap(w http.ResponseWriter, r *http.Request) {
 	isBrowserSim := deviceSig == "sig_browser_turnstile"
 	if h.pool == nil || h.deviceAuth == nil {
 		if isBrowserSim && h.syncSvc != nil {
-			tariff := domain.Tariff{
-				ID:            "TARIFF_ISTANBUL_STD",
-				BaseFareKurus: 2000,
-				IsActive:      true,
-			}
+			tariff := seed.DefaultSeedTariff()
 			ingestReq := sync.IngestEventRequest{
 				IdempotencyKey: idempKey,
 				ValidatorID:    req.ValidatorID,
@@ -651,18 +799,7 @@ func (h *APIHandler) ProcessTap(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tariff := domain.Tariff{
-		ID:                       "TARIFF_ISTANBUL_STD",
-		BaseFareKurus:            2000,
-		StudentFareKurus:         1000,
-		ElderlyFareKurus:         1500,
-		Transfer1DiscountPct:     50,
-		Transfer2DiscountPct:     75,
-		NightSurchargePct:        50,
-		StudentDailyLimit:        10,
-		MonthlyCappingLimitKurus: 150000,
-		IsActive:                 true,
-	}
+	tariff := seed.DefaultSeedTariff()
 
 	ingestReq := sync.IngestEventRequest{
 		IdempotencyKey: idempKey,
@@ -802,7 +939,7 @@ func (h *APIHandler) ListLines(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.pool.Query(r.Context(), "SELECT id, name, mode, operator, is_active, created_at FROM jw_lines ORDER BY id")
+	rows, err := h.pool.Query(r.Context(), "SELECT id, name, mode, operator, is_active, created_at FROM jw_lines WHERE is_active = true ORDER BY id")
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
 		return
@@ -867,15 +1004,11 @@ func (h *APIHandler) CreateLine(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandler) ListStations(w http.ResponseWriter, r *http.Request) {
 	if h.pool == nil {
-		WriteJSON(w, http.StatusOK, []domain.Station{
-			{ID: "STAT_KADIKOY", Name: "Kadıköy İskele", Mode: domain.ModeFerry, Latitude: 40.9904, Longitude: 29.0254, ZoneID: 1},
-			{ID: "STAT_EMINONU", Name: "Eminönü İskele & Meydan", Mode: domain.ModeFerry, Latitude: 41.0175, Longitude: 28.9734, ZoneID: 1},
-			{ID: "STAT_KABATAS", Name: "Kabataş Tramvay", Mode: domain.ModeTram, Latitude: 41.0355, Longitude: 28.9922, ZoneID: 1},
-		})
+		WriteJSON(w, http.StatusOK, seed.DefaultSeedStations())
 		return
 	}
 
-	rows, err := h.pool.Query(r.Context(), "SELECT id, name, mode, latitude, longitude, zone_id, created_at FROM jw_stations ORDER BY id")
+	rows, err := h.pool.Query(r.Context(), "SELECT id, name, mode, latitude, longitude, zone_id, created_at FROM jw_stations WHERE is_active = true ORDER BY id")
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
 		return
@@ -893,22 +1026,7 @@ func (h *APIHandler) ListStations(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandler) ListTariffs(w http.ResponseWriter, r *http.Request) {
 	if h.pool == nil {
-		WriteJSON(w, http.StatusOK, []domain.Tariff{
-			{
-				ID:                       "TARIFF_ISTANBUL_STD",
-				Name:                     "İstanbul Şehir İçi Entegre Tarife",
-				Mode:                     domain.ModeBus,
-				BaseFareKurus:            2000,
-				StudentFareKurus:         1000,
-				ElderlyFareKurus:         1500,
-				Transfer1DiscountPct:     50,
-				Transfer2DiscountPct:     75,
-				NightSurchargePct:        50,
-				StudentDailyLimit:        10,
-				MonthlyCappingLimitKurus: 150000,
-				IsActive:                 true,
-			},
-		})
+		WriteJSON(w, http.StatusOK, []domain.Tariff{seed.DefaultSeedTariff()})
 		return
 	}
 
@@ -946,25 +1064,188 @@ func (h *APIHandler) ListSettlements(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type SettlementSummaryResponse struct {
-		PeriodName     string          `json:"period_name"`
-		IsClosed       bool            `json:"is_closed"`
-		ClosedAt       *time.Time      `json:"closed_at,omitempty"`
-		TotalTrips     int64           `json:"total_trips"`
-		TotalRevenue   domain.Kurus    `json:"total_revenue_kurus"`
-		TotalFee       domain.Kurus    `json:"total_fee_kurus"`
-		TotalNet       domain.Kurus    `json:"total_net_kurus"`
-		OperatorShares []OperatorShare `json:"operator_shares"`
+		PeriodName         string           `json:"period_name"`
+		IsClosed           bool             `json:"is_closed"`
+		ClosedAt           *time.Time       `json:"closed_at,omitempty"`
+		TotalTrips         int64            `json:"total_trips"`
+		TotalRevenue       domain.Kurus     `json:"total_revenue_kurus"`
+		TotalFee           domain.Kurus     `json:"total_fee_kurus"`
+		TotalNet           domain.Kurus     `json:"total_net_kurus"`
+		TotalRechargeKurus *domain.Kurus    `json:"total_recharge_kurus,omitempty"`
+		TotalRechargeCount *int64           `json:"total_recharge_count,omitempty"`
+		TotalSubsidyKurus  *domain.Kurus    `json:"total_subsidy_kurus,omitempty"`
+		TotalSubsidyCount  *int64           `json:"total_subsidy_count,omitempty"`
+		OperatorShares     []OperatorShare  `json:"operator_shares"`
+		History            []map[string]any `json:"history"`
 	}
 
-	periodName := "2026-EKIM"
+	// İstek parametresinden dönem adını al; varsayılan 2026-EKIM
+	periodName := r.URL.Query().Get("period_name")
+	if periodName == "" {
+		periodName = "2026-EKIM"
+	}
+
 	isClosed := false
 	var closedAt *time.Time
 	periodUUID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 
+	// Operator payları ve biniş sayıları dönem içindeki kalıcı olaylardan türetilir.
+	var belediyeShare, ozelHalkShare, izdenizShare domain.Kurus
+	var belediyeTrips, ozelHalkTrips, izdenizTrips int64
+	var totalRechargeKurus *domain.Kurus
+	var totalRechargeCount *int64
+	var totalSubsidyKurus *domain.Kurus
+	var totalSubsidyCount *int64
+	history := make([]map[string]any, 0)
+
 	if h.pool != nil {
-		_ = h.pool.QueryRow(r.Context(), `
-			SELECT is_closed, closed_at FROM jw_settlement_periods WHERE period_name = $1
-		`, periodName).Scan(&isClosed, &closedAt)
+		// Seed edilmiş snapshot toplamları geçmiş dönemlere ait örnek değerler olabilir;
+		// raporun tek kaynağı bu dönemin olayları ve append-only düzeltmeleridir.
+		var startDate, endDate time.Time
+		err := h.pool.QueryRow(r.Context(), `
+			SELECT id, is_closed, closed_at, start_date, end_date
+			FROM jw_settlement_periods WHERE period_name = $1
+		`, periodName).Scan(&periodUUID, &isClosed, &closedAt, &startDate, &endDate)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				WriteError(w, http.StatusNotFound, "PERIOD_NOT_FOUND", "Belirtilen dönem bulunamadı")
+			} else {
+				WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem bilgisi okunamadı: "+err.Error())
+			}
+			return
+		}
+
+		tripRows, tErr := h.pool.Query(r.Context(), `
+			SELECT l.operator, COUNT(*) AS trips, COALESCE(SUM(e.fare_charged_kurus), 0) AS revenue
+			FROM jw_validator_events e
+			JOIN jw_lines l ON l.id = e.line_id
+			WHERE e.status IN ('PROCESSED', 'NEGATIVE_TOLERANCE')
+			  AND e.tapped_at >= $1 AND e.tapped_at < $2
+			GROUP BY l.operator
+		`, startDate, endDate)
+		if tErr != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem binişleri okunamadı: "+tErr.Error())
+			return
+		}
+		defer tripRows.Close()
+		for tripRows.Next() {
+			var operator string
+			var trips, revenue int64
+			if scanErr := tripRows.Scan(&operator, &trips, &revenue); scanErr != nil {
+				WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem biniş verisi okunamadı: "+scanErr.Error())
+				return
+			}
+			switch strings.ToLower(operator) {
+			case "ozel_halk":
+				ozelHalkTrips += trips
+				ozelHalkShare += domain.Kurus(revenue)
+			case "izdeniz":
+				izdenizTrips += trips
+				izdenizShare += domain.Kurus(revenue)
+			case "belediye", "eshot", "izmir büyükşehir belediyesi":
+				belediyeTrips += trips
+				belediyeShare += domain.Kurus(revenue)
+			default:
+				WriteError(w, http.StatusInternalServerError, "UNKNOWN_OPERATOR", "Dönem binişinde tanınmayan işletmeci: "+operator)
+				return
+			}
+		}
+		if rowsErr := tripRows.Err(); rowsErr != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem binişleri okunamadı: "+rowsErr.Error())
+			return
+		}
+		var rechargeAmount int64
+		var rechargeCount int64
+		if err := h.pool.QueryRow(r.Context(), `
+			SELECT COUNT(*), COALESCE(SUM(amount_kurus), 0)
+			FROM jw_ledger
+			WHERE entry_type = 'dolum' AND created_at >= $1 AND created_at < $2
+		`, startDate, endDate).Scan(&rechargeCount, &rechargeAmount); err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem dolumları okunamadı: "+err.Error())
+			return
+		}
+		rechargeKurus := domain.Kurus(rechargeAmount)
+		totalRechargeKurus = &rechargeKurus
+		totalRechargeCount = &rechargeCount
+		var subsidyAmount int64
+		var subsidyCount int64
+		if err := h.pool.QueryRow(r.Context(), `
+			SELECT COUNT(*), COALESCE(SUM(amount_kurus), 0)
+			FROM jw_settlement_ledger
+			WHERE period_id = $1 AND adjustment_type = 'SUBSIDY'
+		`, periodUUID).Scan(&subsidyCount, &subsidyAmount); err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem destek düzeltmeleri okunamadı: "+err.Error())
+			return
+		}
+		subsidyKurus := domain.Kurus(subsidyAmount)
+		totalSubsidyKurus = &subsidyKurus
+		totalSubsidyCount = &subsidyCount
+
+		// Append-only düzeltme tutarları zaten işaretlidir; storno negatif tutarla saklanır.
+		ledgerRows, qErr := h.pool.Query(r.Context(), `
+			SELECT operator, amount_kurus
+			FROM jw_settlement_ledger
+			WHERE period_id = $1
+			ORDER BY created_at ASC
+		`, periodUUID)
+		if qErr != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem düzeltmeleri okunamadı: "+qErr.Error())
+			return
+		}
+		defer ledgerRows.Close()
+		for ledgerRows.Next() {
+			var op string
+			var adjKurus int64
+			if scanErr := ledgerRows.Scan(&op, &adjKurus); scanErr != nil {
+				WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem düzeltmesi okunamadı: "+scanErr.Error())
+				return
+			}
+			adjustment := domain.Kurus(adjKurus)
+			switch strings.ToLower(op) {
+			case "ozel_halk", "özel halk otobüsleri kooperatifi":
+				ozelHalkShare += adjustment
+			case "belediye", "izmir büyükşehir belediyesi (eshot & metro)":
+				belediyeShare += adjustment
+			case "izdeniz", "izdeniz vapur işletmeciliği":
+				izdenizShare += adjustment
+			default:
+				WriteError(w, http.StatusInternalServerError, "UNKNOWN_OPERATOR", "Dönem düzeltmesinde tanınmayan işletmeci: "+op)
+				return
+			}
+		}
+		if rowsErr := ledgerRows.Err(); rowsErr != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem düzeltmeleri okunamadı: "+rowsErr.Error())
+			return
+		}
+		historyRows, hErr := h.pool.Query(r.Context(), `
+			SELECT a.action, a.created_at, COALESCE(a.new_values->>'reason', ''),
+			       COALESCE(a.new_values->>'amount_kurus', ''), COALESCE(u.email, '')
+			FROM jw_audit_logs a
+			LEFT JOIN jw_tf_users u ON u.id = a.user_id
+			WHERE (a.table_name = 'jw_settlement_periods' AND a.record_id = $1
+			       AND a.action IN ('SETTLEMENT_CLOSE', 'SETTLEMENT_REOPEN'))
+			   OR (a.table_name = 'jw_settlement_ledger' AND a.action IN ('SETTLEMENT_STORNO', 'SETTLEMENT_SUBSIDY_ADJUSTMENT')
+			       AND EXISTS (SELECT 1 FROM jw_settlement_ledger sl WHERE sl.id::text = a.record_id AND sl.period_id = $2))
+			ORDER BY a.created_at DESC LIMIT 50
+		`, periodUUID.String(), periodUUID)
+		if hErr != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem denetim geçmişi okunamadı: "+hErr.Error())
+			return
+		}
+		defer historyRows.Close()
+		for historyRows.Next() {
+			var action, reason, amount, actor string
+			var createdAt time.Time
+			if scanErr := historyRows.Scan(&action, &createdAt, &reason, &amount, &actor); scanErr != nil {
+				WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem denetim geçmişi okunamadı: "+scanErr.Error())
+				return
+			}
+			history = append(history, map[string]any{"action": action, "created_at": createdAt, "reason": reason, "amount_kurus": amount, "actor": actor})
+		}
+		if rowsErr := historyRows.Err(); rowsErr != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem denetim geçmişi okunamadı: "+rowsErr.Error())
+			return
+		}
 	} else if h.settleSvc != nil {
 		p, err := h.settleSvc.GetPeriod(periodUUID)
 		if err != nil {
@@ -973,30 +1254,55 @@ func (h *APIHandler) ListSettlements(w http.ResponseWriter, r *http.Request) {
 		if p != nil {
 			isClosed = p.IsClosed
 			closedAt = p.ClosedAt
+			for _, entry := range p.Entries {
+				switch strings.ToLower(entry.Operator) {
+				case "ozel_halk", "özel halk otobüsleri kooperatifi":
+					ozelHalkShare += entry.AmountKurus
+				case "belediye", "izmir büyükşehir belediyesi (eshot & metro)":
+					belediyeShare += entry.AmountKurus
+				case "izdeniz", "izdeniz vapur işletmeciliği":
+					izdenizShare += entry.AmountKurus
+				}
+			}
 		}
 	}
+
+	// Negatif payların sıfıra düzeltilmesi (storno aşımı önlemi)
+	if belediyeShare < 0 {
+		belediyeShare = 0
+	}
+	if ozelHalkShare < 0 {
+		ozelHalkShare = 0
+	}
+	if izdenizShare < 0 {
+		izdenizShare = 0
+	}
+
+	belediyeFee := domain.Kurus(0)
+	ozelHalkFee := domain.Kurus(0)
+	izdenizFee := domain.Kurus(0)
 
 	shares := []OperatorShare{
 		{
 			Operator:   "İzmir Büyükşehir Belediyesi (ESHOT & Metro)",
-			Trips:      42580,
-			ShareKurus: 85160000,
-			FeeKurus:   1703200,
-			NetKurus:   83456800,
+			Trips:      belediyeTrips,
+			ShareKurus: belediyeShare,
+			FeeKurus:   belediyeFee,
+			NetKurus:   belediyeShare - belediyeFee,
 		},
 		{
 			Operator:   "Özel Halk Otobüsleri Kooperatifi",
-			Trips:      18450,
-			ShareKurus: 36900000,
-			FeeKurus:   738000,
-			NetKurus:   36162000,
+			Trips:      ozelHalkTrips,
+			ShareKurus: ozelHalkShare,
+			FeeKurus:   ozelHalkFee,
+			NetKurus:   ozelHalkShare - ozelHalkFee,
 		},
 		{
 			Operator:   "İZDENİZ Vapur İşletmeciliği",
-			Trips:      12400,
-			ShareKurus: 24800000,
-			FeeKurus:   496000,
-			NetKurus:   24304000,
+			Trips:      izdenizTrips,
+			ShareKurus: izdenizShare,
+			FeeKurus:   izdenizFee,
+			NetKurus:   izdenizShare - izdenizFee,
 		},
 	}
 
@@ -1010,14 +1316,19 @@ func (h *APIHandler) ListSettlements(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := SettlementSummaryResponse{
-		PeriodName:     periodName,
-		IsClosed:       isClosed,
-		ClosedAt:       closedAt,
-		TotalTrips:     totalTrips,
-		TotalRevenue:   totalShare,
-		TotalFee:       totalFee,
-		TotalNet:       totalNet,
-		OperatorShares: shares,
+		PeriodName:         periodName,
+		IsClosed:           isClosed,
+		ClosedAt:           closedAt,
+		TotalTrips:         totalTrips,
+		TotalRevenue:       totalShare,
+		TotalFee:           totalFee,
+		TotalNet:           totalNet,
+		TotalRechargeKurus: totalRechargeKurus,
+		TotalRechargeCount: totalRechargeCount,
+		TotalSubsidyKurus:  totalSubsidyKurus,
+		TotalSubsidyCount:  totalSubsidyCount,
+		OperatorShares:     shares,
+		History:            history,
 	}
 
 	WriteJSON(w, http.StatusOK, resp)
@@ -1045,10 +1356,20 @@ func (h *APIHandler) CloseSettlementPeriod(w http.ResponseWriter, r *http.Reques
 		if h.pool != nil {
 			err = h.pool.QueryRow(r.Context(), "SELECT id FROM jw_settlement_periods WHERE period_name = $1", req.PeriodName).Scan(&pID)
 			if err != nil {
-				pID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+				if req.PeriodName == "2026-EKIM" {
+					pID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+				} else {
+					WriteError(w, http.StatusNotFound, "PERIOD_NOT_FOUND", "Belirtilen dönem bulunamadı")
+					return
+				}
 			}
 		} else {
-			pID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+			if req.PeriodName == "2026-EKIM" {
+				pID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
+			} else {
+				WriteError(w, http.StatusNotFound, "PERIOD_NOT_FOUND", "Belirtilen dönem bulunamadı")
+				return
+			}
 		}
 	} else {
 		WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "period_id veya period_name zorunludur")
@@ -1063,22 +1384,29 @@ func (h *APIHandler) CloseSettlementPeriod(w http.ResponseWriter, r *http.Reques
 	}
 
 	if h.pool != nil {
+		tx, err := h.pool.Begin(r.Context())
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Veritabanı işlemi başlatılamadı: "+err.Error())
+			return
+		}
+		defer tx.Rollback(r.Context())
+
 		var isClosed bool
 		var existingClosedAt *time.Time
-		err := h.pool.QueryRow(r.Context(), "SELECT is_closed, closed_at FROM jw_settlement_periods WHERE id = $1", pID).Scan(&isClosed, &existingClosedAt)
+		err = tx.QueryRow(r.Context(), "SELECT is_closed, closed_at FROM jw_settlement_periods WHERE id = $1 FOR UPDATE", pID).Scan(&isClosed, &existingClosedAt)
 		if err != nil {
 			periodName := req.PeriodName
 			if periodName == "" {
 				periodName = fmt.Sprintf("PERIOD-%s-%d", pID.String()[:8], time.Now().UnixNano())
 			}
-			_, insErr := h.pool.Exec(r.Context(), `
+			_, insErr := tx.Exec(r.Context(), `
 				INSERT INTO jw_settlement_periods (id, period_name, start_date, end_date, is_closed)
 				VALUES ($1, $2, NOW() - INTERVAL '1 day', NOW(), false)
 				ON CONFLICT (id) DO UPDATE SET period_name = EXCLUDED.period_name
 			`, pID, periodName)
 			if insErr != nil {
 				fallbackName := fmt.Sprintf("PERIOD-%s-%d", pID.String(), time.Now().UnixNano())
-				_, insErr = h.pool.Exec(r.Context(), `
+				_, insErr = tx.Exec(r.Context(), `
 					INSERT INTO jw_settlement_periods (id, period_name, start_date, end_date, is_closed)
 					VALUES ($1, $2, NOW() - INTERVAL '1 day', NOW(), false)
 					ON CONFLICT (id) DO NOTHING
@@ -1095,7 +1423,7 @@ func (h *APIHandler) CloseSettlementPeriod(w http.ResponseWriter, r *http.Reques
 			return
 		}
 
-		res, err := h.pool.Exec(r.Context(), `
+		res, err := tx.Exec(r.Context(), `
 			UPDATE jw_settlement_periods 
 			SET is_closed = true, closed_at = NOW(), closed_by = $1
 			WHERE id = $2 AND is_closed = false
@@ -1110,10 +1438,20 @@ func (h *APIHandler) CloseSettlementPeriod(w http.ResponseWriter, r *http.Reques
 		}
 
 		now := time.Now()
-		_, _ = h.pool.Exec(r.Context(), `
+		nowStr := now.Format(time.RFC3339)
+		_, auditErr := tx.Exec(r.Context(), `
 			INSERT INTO jw_audit_logs (user_id, action, table_name, record_id, new_values, created_at)
-			VALUES ($1, 'SETTLEMENT_CLOSE', 'jw_settlement_periods', $2, json_build_object('is_closed', true, 'closed_at', $3)::jsonb, NOW())
-		`, closedBy, pID.String(), now)
+			VALUES ($1, 'SETTLEMENT_CLOSE', 'jw_settlement_periods', $2, json_build_object('is_closed', true, 'closed_at', $3::text)::jsonb, NOW())
+		`, closedBy, pID.String(), nowStr)
+		if auditErr != nil {
+			WriteError(w, http.StatusInternalServerError, "AUDIT_ERROR", "Dönem kapanış denetim kaydı oluşturulamadı: "+auditErr.Error())
+			return
+		}
+
+		if err := tx.Commit(r.Context()); err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem kapanış işlemi onaylanamadı: "+err.Error())
+			return
+		}
 
 		if h.settleSvc != nil {
 			_, _ = h.settleSvc.ClosePeriod(pID)
@@ -1169,39 +1507,60 @@ func (h *APIHandler) ReopenSettlementPeriod(w http.ResponseWriter, r *http.Reque
 		req.Reason = "Yetkili mali işler denetimi kapsamında yeniden açma"
 	}
 
-	if req.PeriodName != "2026-EKIM" {
-		WriteError(w, http.StatusBadRequest, "INVALID_PERIOD", "Yalnızca 2026-EKIM dönemi için yetkili denetim yeniden açma işlemi desteklenmektedir")
-		return
-	}
-
 	if h.pool != nil {
-		var periodID uuid.UUID
-		err := h.pool.QueryRow(r.Context(), `
-			SELECT id FROM jw_settlement_periods WHERE period_name = $1
-		`, req.PeriodName).Scan(&periodID)
+		tx, err := h.pool.Begin(r.Context())
 		if err != nil {
-			periodID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
-			_, _ = h.pool.Exec(r.Context(), `
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Veritabanı işlemi başlatılamadı: "+err.Error())
+			return
+		}
+		defer tx.Rollback(r.Context())
+
+		var periodID uuid.UUID
+		var isClosed bool
+		err = tx.QueryRow(r.Context(), `
+			SELECT id, is_closed FROM jw_settlement_periods WHERE period_name = $1 FOR UPDATE
+		`, req.PeriodName).Scan(&periodID, &isClosed)
+		if err != nil {
+			// Dönem bulunamadı — kayıt oluştur ve aç
+			periodID = uuid.New()
+			_, insErr := tx.Exec(r.Context(), `
 				INSERT INTO jw_settlement_periods (id, period_name, start_date, end_date, is_closed)
-				VALUES ($1, '2026-EKIM', NOW() - INTERVAL '30 days', NOW(), false)
-				ON CONFLICT (id) DO UPDATE SET is_closed = false, closed_at = NULL, closed_by = NULL
-			`, periodID)
+				VALUES ($1, $2, NOW() - INTERVAL '30 days', NOW(), false)
+				ON CONFLICT (period_name) DO UPDATE SET is_closed = false, closed_at = NULL, closed_by = NULL
+			`, periodID, req.PeriodName)
+			if insErr != nil {
+				WriteError(w, http.StatusNotFound, "PERIOD_NOT_FOUND", "Dönem bulunamadı ve oluşturulamadı: "+insErr.Error())
+				return
+			}
 		} else {
-			_, err = h.pool.Exec(r.Context(), `
+			if !isClosed {
+				WriteError(w, http.StatusConflict, "ALREADY_OPEN", "Dönem zaten açık durumda")
+				return
+			}
+			_, err = tx.Exec(r.Context(), `
 				UPDATE jw_settlement_periods
 				SET is_closed = false, closed_at = NULL, closed_by = NULL
-				WHERE period_name = $1
-			`, req.PeriodName)
+				WHERE id = $1
+			`, periodID)
 			if err != nil {
 				WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
 				return
 			}
 		}
 
-		_, _ = h.pool.Exec(r.Context(), `
+		_, auditErr := tx.Exec(r.Context(), `
 			INSERT INTO jw_audit_logs (user_id, action, table_name, record_id, new_values, created_at)
-			VALUES ($1, 'SETTLEMENT_REOPEN', 'jw_settlement_periods', $2, json_build_object('is_closed', false, 'period_name', $3, 'reason', $4)::jsonb, NOW())
+			VALUES ($1, 'SETTLEMENT_REOPEN', 'jw_settlement_periods', $2, json_build_object('is_closed', false, 'period_name', $3::text, 'reason', $4::text)::jsonb, NOW())
 		`, claims.UserID, periodID.String(), req.PeriodName, req.Reason)
+		if auditErr != nil {
+			WriteError(w, http.StatusInternalServerError, "AUDIT_ERROR", "Dönem açılış denetim kaydı oluşturulamadı: "+auditErr.Error())
+			return
+		}
+
+		if err := tx.Commit(r.Context()); err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Dönem açılış işlemi onaylanamadı: "+err.Error())
+			return
+		}
 
 		if h.settleSvc != nil {
 			_, _ = h.settleSvc.ReopenPeriod(periodID)
@@ -1212,7 +1571,7 @@ func (h *APIHandler) ReopenSettlementPeriod(w http.ResponseWriter, r *http.Reque
 			"period_name": req.PeriodName,
 			"is_closed":   false,
 			"reopened_by": claims.UserID,
-			"message":     "2026-EKIM dönemi başarıyla tekrar açıldı",
+			"message":     req.PeriodName + " dönemi başarıyla tekrar açıldı",
 		})
 		return
 	}
@@ -1228,7 +1587,7 @@ func (h *APIHandler) ReopenSettlementPeriod(w http.ResponseWriter, r *http.Reque
 		"period_name": req.PeriodName,
 		"is_closed":   false,
 		"reopened_by": claims.UserID,
-		"message":     "2026-EKIM dönemi başarıyla tekrar açıldı",
+		"message":     req.PeriodName + " dönemi başarıyla tekrar açıldı",
 	})
 }
 
@@ -1278,17 +1637,28 @@ func (h *APIHandler) StornoSettlement(w http.ResponseWriter, r *http.Request) {
 	}
 
 	idempKey := r.Header.Get("Idempotency-Key")
+	var idempotencyKey any
+	if idempKey != "" {
+		idempotencyKey = idempKey
+	}
 
 	if h.pool != nil {
+		tx, err := h.pool.Begin(r.Context())
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Veritabanı işlemi başlatılamadı: "+err.Error())
+			return
+		}
+		defer tx.Rollback(r.Context())
+
 		var isClosed bool
-		err := h.pool.QueryRow(r.Context(), "SELECT is_closed FROM jw_settlement_periods WHERE id = $1", pID).Scan(&isClosed)
+		err = tx.QueryRow(r.Context(), "SELECT is_closed FROM jw_settlement_periods WHERE id = $1 FOR UPDATE", pID).Scan(&isClosed)
 		if err != nil {
 			// ID ile bulunamadıysa 2026-EKIM dönem adıyla ara
-			err = h.pool.QueryRow(r.Context(), "SELECT id, is_closed FROM jw_settlement_periods WHERE period_name = '2026-EKIM'").Scan(&pID, &isClosed)
+			err = tx.QueryRow(r.Context(), "SELECT id, is_closed FROM jw_settlement_periods WHERE period_name = '2026-EKIM' FOR UPDATE").Scan(&pID, &isClosed)
 			if err != nil {
 				// İlk kurulum / sıfırlama güvenliği: 2026-EKIM dönemini oluştur
 				pID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
-				_, _ = h.pool.Exec(r.Context(), `
+				_, _ = tx.Exec(r.Context(), `
 					INSERT INTO jw_settlement_periods (id, period_name, start_date, end_date, is_closed, closed_at)
 					VALUES ($1, '2026-EKIM', NOW() - INTERVAL '30 days', NOW(), false, NULL)
 					ON CONFLICT (id) DO NOTHING
@@ -1306,7 +1676,7 @@ func (h *APIHandler) StornoSettlement(w http.ResponseWriter, r *http.Request) {
 			var existingOp string
 			var existingAmount domain.Kurus
 			var existingReason *string
-			err := h.pool.QueryRow(r.Context(), `
+			err := tx.QueryRow(r.Context(), `
 				SELECT id, operator, amount_kurus, storno_reason
 				FROM jw_settlement_ledger
 				WHERE idempotency_key = $1
@@ -1329,25 +1699,35 @@ func (h *APIHandler) StornoSettlement(w http.ResponseWriter, r *http.Request) {
 		}
 
 		stornoID := uuid.New()
-		_, err = h.pool.Exec(r.Context(), `
-			INSERT INTO jw_settlement_ledger (id, period_id, operator, amount_kurus, is_storno, storno_reason, idempotency_key, created_at)
-			VALUES ($1, $2, $3, $4, true, $5, $6, NOW())
-		`, stornoID, pID, req.Operator, req.Amount, req.Reason, idempKey)
-		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
-			return
-		}
-
 		claimsVal := r.Context().Value(UserContextKey)
 		var actorID *uuid.UUID
 		if claimsVal != nil {
 			claims := claimsVal.(*auth.Claims)
 			actorID = &claims.UserID
 		}
-		_, _ = h.pool.Exec(r.Context(), `
+		_, err = tx.Exec(r.Context(), `
+			INSERT INTO jw_settlement_ledger
+				(id, period_id, operator, amount_kurus, is_storno, adjustment_type, storno_reason, reason, actor_id, idempotency_key, created_at)
+			VALUES ($1, $2, $3, $4, true, 'STORNO', $5, $5, $6, $7, NOW())
+		`, stornoID, pID, req.Operator, req.Amount, req.Reason, actorID, idempotencyKey)
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
+			return
+		}
+
+		_, auditErr := tx.Exec(r.Context(), `
 			INSERT INTO jw_audit_logs (user_id, action, table_name, record_id, new_values, created_at)
-			VALUES ($1, 'SETTLEMENT_STORNO', 'jw_settlement_ledger', $2, json_build_object('amount_kurus', $3, 'operator', $4, 'reason', $5)::jsonb, NOW())
+			VALUES ($1, 'SETTLEMENT_STORNO', 'jw_settlement_ledger', $2, json_build_object('amount_kurus', $3::bigint, 'operator', $4::text, 'reason', $5::text)::jsonb, NOW())
 		`, actorID, stornoID.String(), req.Amount, req.Operator, req.Reason)
+		if auditErr != nil {
+			WriteError(w, http.StatusInternalServerError, "AUDIT_ERROR", "Storno denetim kaydı oluşturulamadı: "+auditErr.Error())
+			return
+		}
+
+		if err := tx.Commit(r.Context()); err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Storno işlemi onaylanamadı: "+err.Error())
+			return
+		}
 
 		WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"id":            stornoID,
@@ -1375,6 +1755,146 @@ func (h *APIHandler) StornoSettlement(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, entry)
+}
+
+func (h *APIHandler) AddSettlementSubsidy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PeriodID   string       `json:"period_id"`
+		PeriodName string       `json:"period_name"`
+		Operator   string       `json:"operator"`
+		Amount     domain.Kurus `json:"amount_kurus"`
+		Reason     string       `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "Geçersiz istek")
+		return
+	}
+	if req.Amount <= 0 {
+		WriteError(w, http.StatusBadRequest, "INVALID_AMOUNT", "Destek tutarı pozitif tam sayı kuruş olmalıdır")
+		return
+	}
+	req.Operator = strings.ToLower(strings.TrimSpace(req.Operator))
+	switch strings.ToLower(req.Operator) {
+	case "belediye", "izdeniz", "ozel_halk":
+	default:
+		WriteError(w, http.StatusBadRequest, "INVALID_OPERATOR", "Destek için geçerli bir işletmeci seçilmelidir")
+		return
+	}
+	req.Reason = strings.TrimSpace(req.Reason)
+	if req.Reason == "" || len(req.Reason) > 500 {
+		WriteError(w, http.StatusBadRequest, "INVALID_REASON", "Gerekçe zorunludur ve 500 karakteri aşamaz")
+		return
+	}
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" || len(idempotencyKey) > 255 {
+		WriteError(w, http.StatusBadRequest, "INVALID_IDEMPOTENCY_KEY", "Idempotency-Key başlığı zorunludur ve 255 karakteri aşamaz")
+		return
+	}
+	claimsVal := r.Context().Value(UserContextKey)
+	if claimsVal == nil {
+		WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Oturum açılmamış")
+		return
+	}
+	claims := claimsVal.(*auth.Claims)
+	if h.pool == nil {
+		WriteError(w, http.StatusServiceUnavailable, "DATABASE_UNAVAILABLE", "Settlement adjustment için PostgreSQL gereklidir")
+		return
+	}
+
+	tx, err := h.pool.Begin(r.Context())
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Veritabanı işlemi başlatılamadı")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	if _, err := tx.Exec(r.Context(), "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", idempotencyKey); err != nil {
+		WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Idempotency kilidi alınamadı")
+		return
+	}
+
+	var periodID uuid.UUID
+	if req.PeriodID != "" {
+		periodID, err = uuid.Parse(req.PeriodID)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "INVALID_UUID", "Geçersiz dönem ID")
+			return
+		}
+		if req.PeriodName != "" {
+			err = tx.QueryRow(r.Context(), `SELECT id FROM jw_settlement_periods WHERE id = $1 AND period_name = $2 FOR UPDATE`, periodID, req.PeriodName).Scan(&periodID)
+		} else {
+			err = tx.QueryRow(r.Context(), `SELECT id FROM jw_settlement_periods WHERE id = $1 FOR UPDATE`, periodID).Scan(&periodID)
+		}
+	} else if req.PeriodName != "" {
+		err = tx.QueryRow(r.Context(), `SELECT id FROM jw_settlement_periods WHERE period_name = $1 FOR UPDATE`, req.PeriodName).Scan(&periodID)
+	} else {
+		WriteError(w, http.StatusBadRequest, "INVALID_PERIOD", "Dönem ID veya adı zorunludur")
+		return
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		WriteError(w, http.StatusNotFound, "PERIOD_NOT_FOUND", "Settlement dönemi bulunamadı")
+		return
+	}
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Settlement dönemi okunamadı")
+		return
+	}
+
+	var isClosed bool
+	if err := tx.QueryRow(r.Context(), `SELECT is_closed FROM jw_settlement_periods WHERE id = $1`, periodID).Scan(&isClosed); err != nil {
+		WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Settlement dönemi durumu okunamadı")
+		return
+	}
+	if !isClosed {
+		WriteError(w, http.StatusConflict, "PERIOD_NOT_CLOSED", "Destek düzeltmesi yalnızca kapatılmış döneme eklenebilir")
+		return
+	}
+
+	var existingID, existingPeriodID uuid.UUID
+	var existingActorID *uuid.UUID
+	var existingOperator, existingReason, existingType string
+	var existingAmount domain.Kurus
+	err = tx.QueryRow(r.Context(), `
+		SELECT id, period_id, operator, amount_kurus, adjustment_type, COALESCE(reason, ''), actor_id
+		FROM jw_settlement_ledger WHERE idempotency_key = $1
+	`, idempotencyKey).Scan(&existingID, &existingPeriodID, &existingOperator, &existingAmount, &existingType, &existingReason, &existingActorID)
+	if err == nil {
+		if existingType != "SUBSIDY" || existingPeriodID != periodID || existingOperator != req.Operator || existingAmount != req.Amount || existingReason != req.Reason || existingActorID == nil || *existingActorID != claims.UserID {
+			WriteError(w, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency-Key daha önce farklı settlement adjustment için kullanılmış")
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"id": existingID, "period_id": periodID, "operator": existingOperator, "amount_kurus": existingAmount, "adjustment_type": existingType, "reason": existingReason, "idempotent": true})
+		return
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Idempotency kaydı okunamadı")
+		return
+	}
+
+	adjustmentID := uuid.New()
+	var createdAt time.Time
+	if err := tx.QueryRow(r.Context(), `
+		INSERT INTO jw_settlement_ledger
+			(id, period_id, operator, amount_kurus, is_storno, adjustment_type, reason, actor_id, idempotency_key, created_at)
+		VALUES ($1, $2, $3, $4, false, 'SUBSIDY', $5, $6, $7, NOW())
+		RETURNING created_at
+	`, adjustmentID, periodID, req.Operator, req.Amount, req.Reason, claims.UserID, idempotencyKey).Scan(&createdAt); err != nil {
+		WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Settlement adjustment kaydedilemedi")
+		return
+	}
+	_, err = tx.Exec(r.Context(), `
+		INSERT INTO jw_audit_logs (user_id, action, table_name, record_id, new_values, created_at)
+		VALUES ($1, 'SETTLEMENT_SUBSIDY_ADJUSTMENT', 'jw_settlement_ledger', $2,
+		        json_build_object('adjustment_type', 'SUBSIDY', 'period_id', $3::text, 'operator', $4::text, 'amount_kurus', $5::bigint, 'reason', $6::text)::jsonb, $7)
+	`, claims.UserID, adjustmentID.String(), periodID.String(), req.Operator, req.Amount, req.Reason, createdAt)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "AUDIT_ERROR", "Settlement adjustment denetim kaydı yazılamadı")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Settlement adjustment onaylanamadı")
+		return
+	}
+	WriteJSON(w, http.StatusCreated, map[string]any{"id": adjustmentID, "period_id": periodID, "operator": req.Operator, "amount_kurus": req.Amount, "adjustment_type": "SUBSIDY", "reason": req.Reason, "created_at": createdAt})
 }
 
 // 7. F-6: Ceza Kayıtları
@@ -1501,6 +2021,10 @@ func (h *APIHandler) ListPenalties(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cursorTime, cursorID, hasCursor := decodeCursor(cursor)
+	if cursor != "" && !hasCursor {
+		WriteError(w, http.StatusBadRequest, "INVALID_CURSOR", "Geçersiz sayfalama imleci")
+		return
+	}
 
 	if h.pool == nil {
 		h.memMu.RLock()
@@ -1511,10 +2035,14 @@ func (h *APIHandler) ListPenalties(w http.ResponseWriter, r *http.Request) {
 		startIndex := 0
 		if hasCursor {
 			for i, p := range all {
-				if p.ID == cursorID || p.IssuedAt.Equal(cursorTime) {
+				if p.ID == cursorID && p.IssuedAt.Equal(cursorTime) {
 					startIndex = i + 1
 					break
 				}
+			}
+			if startIndex == 0 {
+				WriteError(w, http.StatusBadRequest, "INVALID_CURSOR", "Sayfalama imleci artık mevcut değil")
+				return
 			}
 		}
 		endIndex := startIndex + limit
@@ -1545,6 +2073,17 @@ func (h *APIHandler) ListPenalties(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if hasCursor {
+		var exists bool
+		if err := h.pool.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM jw_penalties WHERE id = $1 AND issued_at = $2)", cursorID, cursorTime).Scan(&exists); err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
+			return
+		} else if !exists {
+			WriteError(w, http.StatusBadRequest, "INVALID_CURSOR", "Sayfalama imleci artık mevcut değil")
+			return
+		}
+	}
+
 	var rows pgx.Rows
 	var err error
 	if hasCursor {
@@ -1555,19 +2094,15 @@ func (h *APIHandler) ListPenalties(w http.ResponseWriter, r *http.Request) {
 			WHERE (issued_at, id) < ($1, $2)
 			ORDER BY issued_at DESC, id DESC
 			LIMIT $3
-		`, cursorTime, cursorID, limit)
+		`, cursorTime, cursorID, limit+1)
 	} else {
-		fetchLimit := limit
-		if cursor == "" && limitStr == "" {
-			fetchLimit = 100
-		}
 		rows, err = h.pool.Query(r.Context(), `
 			SELECT id, inspector_id, card_id, COALESCE(line_id, ''), COALESCE(station_id, ''),
 			       penalty_amount_kurus, reason, issued_at, COALESCE(notes, '')
 			FROM jw_penalties
 			ORDER BY issued_at DESC, id DESC
 			LIMIT $1
-		`, fetchLimit)
+		`, limit+1)
 	}
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
@@ -1578,12 +2113,22 @@ func (h *APIHandler) ListPenalties(w http.ResponseWriter, r *http.Request) {
 	penalties := make([]domain.Penalty, 0)
 	for rows.Next() {
 		var p domain.Penalty
-		if err := rows.Scan(&p.ID, &p.InspectorID, &p.CardID, &p.LineID, &p.StationID, &p.PenaltyAmountKurus, &p.Reason, &p.IssuedAt, &p.Notes); err == nil {
-			penalties = append(penalties, p)
+		if err := rows.Scan(&p.ID, &p.InspectorID, &p.CardID, &p.LineID, &p.StationID, &p.PenaltyAmountKurus, &p.Reason, &p.IssuedAt, &p.Notes); err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
+			return
 		}
+		penalties = append(penalties, p)
+	}
+	if err := rows.Err(); err != nil {
+		WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
+		return
 	}
 
-	if len(penalties) == limit && len(penalties) > 0 {
+	hasMore := len(penalties) > limit
+	if hasMore {
+		penalties = penalties[:limit]
+	}
+	if hasMore && len(penalties) > 0 {
 		last := penalties[len(penalties)-1]
 		w.Header().Set("X-Next-Cursor", encodeCursor(last.IssuedAt, last.ID))
 		w.Header().Set("X-Has-More", "true")
@@ -1623,41 +2168,34 @@ func (h *APIHandler) GetHeatmap(w http.ResponseWriter, r *http.Request) {
 			ORDER BY tap_count DESC
 			LIMIT 10
 		`)
-		if err == nil {
-			defer rows.Close()
-			var items []HeatmapItem
-			for rows.Next() {
-				var it HeatmapItem
-				if err := rows.Scan(&it.LineID, &it.LineName, &it.Mode, &it.Operator, &it.TapCount, &it.OccupancyRatio, &it.CrowdLevel); err == nil {
-					items = append(items, it)
-				}
-			}
-			if len(items) > 0 {
-				WriteJSON(w, http.StatusOK, items)
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Yoğunluk raporu okunamadı")
+			return
+		}
+		defer rows.Close()
+		items := make([]HeatmapItem, 0)
+		for rows.Next() {
+			var it HeatmapItem
+			if err := rows.Scan(&it.LineID, &it.LineName, &it.Mode, &it.Operator, &it.TapCount, &it.OccupancyRatio, &it.CrowdLevel); err != nil {
+				WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Yoğunluk raporu çözümlenemedi")
 				return
 			}
+			items = append(items, it)
 		}
+		if err := rows.Err(); err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Yoğunluk raporu tamamlanamadı")
+			return
+		}
+		WriteJSON(w, http.StatusOK, items)
+		return
 	}
 
-	heatmap := []HeatmapItem{
-		{LineID: "LINE_500T", LineName: "500T Tuzla - Cevizlibağ", Mode: "bus", Operator: "belediye", TapCount: 1840, OccupancyRatio: 0.92, CrowdLevel: "HIGH"},
-		{LineID: "LINE_T1", LineName: "T1 Kabataş - Bağcılar", Mode: "tram", Operator: "belediye", TapCount: 2450, OccupancyRatio: 0.98, CrowdLevel: "HIGH"},
-		{LineID: "LINE_14ES", LineName: "14ES Esenkent - Kadıköy", Mode: "bus", Operator: "ozel_halk", TapCount: 650, OccupancyRatio: 0.55, CrowdLevel: "MEDIUM"},
-		{LineID: "LINE_VAPUR_KE", LineName: "Kadıköy - Eminönü Vapuru", Mode: "ferry", Operator: "belediye", TapCount: 320, OccupancyRatio: 0.35, CrowdLevel: "LOW"},
-	}
-
-	WriteJSON(w, http.StatusOK, heatmap)
+	WriteJSON(w, http.StatusOK, []HeatmapItem{})
 }
 
 func (h *APIHandler) GetAnomalies(w http.ResponseWriter, r *http.Request) {
-	anoms := h.anomalyDet.GetAnomalies()
-
 	limitStr := r.URL.Query().Get("limit")
 	cursor := r.URL.Query().Get("cursor")
-	if cursor == "" && limitStr == "" {
-		WriteJSON(w, http.StatusOK, anoms)
-		return
-	}
 
 	limit := 50
 	if limitStr != "" {
@@ -1668,14 +2206,115 @@ func (h *APIHandler) GetAnomalies(w http.ResponseWriter, r *http.Request) {
 			limit = l
 		}
 	}
+	var cursorUUID uuid.UUID
+	if cursor != "" {
+		parsed, err := uuid.Parse(cursor)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "INVALID_CURSOR", "Geçersiz sayfalama imleci")
+			return
+		}
+		cursorUUID = parsed
+	}
+
+	if h.pool != nil {
+		var (
+			rows pgx.Rows
+			err  error
+		)
+
+		if cursor != "" {
+			var cursorTime time.Time
+			cErr := h.pool.QueryRow(r.Context(), "SELECT detected_at FROM jw_anomalies WHERE id = $1", cursorUUID).Scan(&cursorTime)
+			if errors.Is(cErr, pgx.ErrNoRows) {
+				WriteError(w, http.StatusBadRequest, "INVALID_CURSOR", "Sayfalama imleci artık mevcut değil")
+				return
+			}
+			if cErr != nil {
+				WriteError(w, http.StatusInternalServerError, "DB_ERROR", cErr.Error())
+				return
+			}
+			rows, err = h.pool.Query(r.Context(), `
+						SELECT id, card_id, event_id, anomaly_type, description,
+						       COALESCE(calculated_speed_kmh, 0), COALESCE(time_delta_seconds, 0),
+						       COALESCE(distance_meters, 0), detected_at
+						FROM jw_anomalies
+						WHERE (detected_at < $1) OR (detected_at = $1 AND id < $2)
+						ORDER BY detected_at DESC, id DESC
+						LIMIT $3
+					`, cursorTime, cursorUUID, limit+1)
+		}
+
+		if cursor == "" && rows == nil {
+			rows, err = h.pool.Query(r.Context(), `
+				SELECT id, card_id, event_id, anomaly_type, description,
+				       COALESCE(calculated_speed_kmh, 0), COALESCE(time_delta_seconds, 0),
+				       COALESCE(distance_meters, 0), detected_at
+				FROM jw_anomalies
+				ORDER BY detected_at DESC, id DESC
+				LIMIT $1
+			`, limit+1)
+		}
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
+			return
+		}
+
+		if rows != nil {
+			defer rows.Close()
+			var dbAnoms []domain.Anomaly
+			for rows.Next() {
+				var a domain.Anomaly
+				var aType string
+				if sErr := rows.Scan(&a.ID, &a.CardID, &a.EventID, &aType, &a.Description, &a.CalculatedSpeedKmh, &a.TimeDeltaSeconds, &a.DistanceMeters, &a.DetectedAt); sErr != nil {
+					WriteError(w, http.StatusInternalServerError, "DB_ERROR", sErr.Error())
+					return
+				}
+				a.AnomalyType = domain.AnomalyType(aType)
+				dbAnoms = append(dbAnoms, a)
+			}
+			if rowsErr := rows.Err(); rowsErr != nil {
+				WriteError(w, http.StatusInternalServerError, "DB_ERROR", rowsErr.Error())
+				return
+			}
+
+			if len(dbAnoms) > 0 || (cursor != "" && len(dbAnoms) == 0) {
+				hasMore := len(dbAnoms) > limit
+				if hasMore {
+					dbAnoms = dbAnoms[:limit]
+				}
+				if len(dbAnoms) > 0 && hasMore {
+					last := dbAnoms[len(dbAnoms)-1]
+					w.Header().Set("X-Next-Cursor", last.ID.String())
+					w.Header().Set("X-Has-More", "true")
+				} else {
+					w.Header().Set("X-Has-More", "false")
+				}
+				WriteJSON(w, http.StatusOK, dbAnoms)
+				return
+			}
+		}
+	}
+
+	anoms := h.anomalyDet.GetAnomalies()
+
+	if cursor == "" && limitStr == "" {
+		WriteJSON(w, http.StatusOK, anoms)
+		return
+	}
 
 	startIndex := 0
 	if cursor != "" {
+		found := false
 		for i, a := range anoms {
-			if a.ID.String() == cursor || a.DetectedAt.Format(time.RFC3339Nano) == cursor {
+			if a.ID == cursorUUID {
 				startIndex = i + 1
+				found = true
 				break
 			}
+		}
+		if !found {
+			WriteError(w, http.StatusBadRequest, "INVALID_CURSOR", "Sayfalama imleci artık mevcut değil")
+			return
 		}
 	}
 
@@ -1831,65 +2470,45 @@ func (h *APIHandler) GetLineFinancials(w http.ResponseWriter, r *http.Request) {
 			       COALESCE(SUM(e.fare_charged_kurus), 0) as gross_revenue
 			FROM jw_lines l
 			LEFT JOIN jw_validator_events e ON e.line_id = l.id AND e.status = 'PROCESSED'
+			WHERE l.is_active = true
 			GROUP BY l.id, l.name, l.operator
 			ORDER BY gross_revenue DESC, total_boardings DESC
 		`)
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var rep LineFinancialReport
-				var boardings int64
-				var gross domain.Kurus
-				if err := rows.Scan(&rep.LineID, &rep.LineName, &rep.Operator, &boardings, &gross); err == nil {
-					rep.TotalBoardings = boardings
-					rep.GrossRevenueKurus = gross
-
-					vKm := int64(120)
-					if boardings > 0 {
-						vKm += (boardings / 15) * 8
-					}
-					rep.VehicleKmMeters = vKm
-					rep.FuelEnergyCostKurus = domain.Kurus(vKm * 2500)
-					rep.CrewCostKurus = domain.Kurus(16 * 15000)
-					rep.TotalCostKurus = rep.FuelEnergyCostKurus + rep.CrewCostKurus
-					rep.DiscountImpactKurus = domain.Kurus(boardings * 500)
-					rep.NetMarginKurus = rep.GrossRevenueKurus - rep.TotalCostKurus
-					if rep.TotalCostKurus > 0 {
-						rep.NetMarginBasisPoints = int64(rep.NetMarginKurus) * 10000 / int64(rep.TotalCostKurus)
-					}
-					rep.CostBasis = "ESTIMATED_COST_MODEL_V1"
-					reports = append(reports, rep)
-				}
-			}
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Hat gelir raporu okunamadı")
+			return
 		}
-	}
+		defer rows.Close()
+		for rows.Next() {
+			var rep LineFinancialReport
+			var boardings int64
+			var gross domain.Kurus
+			if err := rows.Scan(&rep.LineID, &rep.LineName, &rep.Operator, &boardings, &gross); err != nil {
+				WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Hat gelir raporu çözümlenemedi")
+				return
+			}
+			rep.TotalBoardings = boardings
+			rep.GrossRevenueKurus = gross
 
-	if len(reports) == 0 {
-		reports = []LineFinancialReport{
-			{
-				LineID: "LINE_500T", LineName: "500T Tuzla - Cevizlibağ", Operator: "belediye",
-				TotalBoardings: 12450, GrossRevenueKurus: 24900000, DiscountImpactKurus: 3100000,
-				VehicleKmMeters: 1420, FuelEnergyCostKurus: 3550000, CrewCostKurus: 4800000,
-				TotalCostKurus: 8350000, NetMarginKurus: 16550000, NetMarginBasisPoints: 19820, CostBasis: "ESTIMATED_COST_MODEL_V1",
-			},
-			{
-				LineID: "LINE_14ES", LineName: "14ES Esenkent - Kadıköy", Operator: "ozel_halk",
-				TotalBoardings: 6820, GrossRevenueKurus: 13640000, DiscountImpactKurus: 1700000,
-				VehicleKmMeters: 850, FuelEnergyCostKurus: 2125000, CrewCostKurus: 3600000,
-				TotalCostKurus: 5725000, NetMarginKurus: 7915000, NetMarginBasisPoints: 13825, CostBasis: "ESTIMATED_COST_MODEL_V1",
-			},
-			{
-				LineID: "LINE_T1", LineName: "T1 Kabataş - Bağcılar Tramvay", Operator: "belediye",
-				TotalBoardings: 28900, GrossRevenueKurus: 57800000, DiscountImpactKurus: 7200000,
-				VehicleKmMeters: 980, FuelEnergyCostKurus: 1960000, CrewCostKurus: 6000000,
-				TotalCostKurus: 7960000, NetMarginKurus: 49840000, NetMarginBasisPoints: 62613, CostBasis: "ESTIMATED_COST_MODEL_V1",
-			},
-			{
-				LineID: "LINE_VAPUR_KE", LineName: "Kadıköy - Eminönü Vapuru", Operator: "belediye",
-				TotalBoardings: 15400, GrossRevenueKurus: 30800000, DiscountImpactKurus: 3800000,
-				VehicleKmMeters: 320, FuelEnergyCostKurus: 4800000, CrewCostKurus: 4500000,
-				TotalCostKurus: 9300000, NetMarginKurus: 21500000, NetMarginBasisPoints: 23118, CostBasis: "ESTIMATED_COST_MODEL_V1",
-			},
+			vKm := int64(120)
+			if boardings > 0 {
+				vKm += (boardings / 15) * 8
+			}
+			rep.VehicleKmMeters = vKm
+			rep.FuelEnergyCostKurus = domain.Kurus(vKm * 2500)
+			rep.CrewCostKurus = domain.Kurus(16 * 15000)
+			rep.TotalCostKurus = rep.FuelEnergyCostKurus + rep.CrewCostKurus
+			rep.DiscountImpactKurus = domain.Kurus(boardings * 500)
+			rep.NetMarginKurus = rep.GrossRevenueKurus - rep.TotalCostKurus
+			if rep.TotalCostKurus > 0 {
+				rep.NetMarginBasisPoints = int64(rep.NetMarginKurus) * 10000 / int64(rep.TotalCostKurus)
+			}
+			rep.CostBasis = "ESTIMATED_COST_MODEL_V1"
+			reports = append(reports, rep)
+		}
+		if err := rows.Err(); err != nil {
+			WriteError(w, http.StatusInternalServerError, "DB_ERROR", "Hat gelir raporu tamamlanamadı")
+			return
 		}
 	}
 

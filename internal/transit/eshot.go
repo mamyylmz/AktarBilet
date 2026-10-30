@@ -56,6 +56,7 @@ type TransitService struct {
 	cache        map[string]*cachedLine
 	cacheMu      sync.RWMutex
 	cacheTTL     time.Duration
+	fetchTimeout time.Duration
 	requestMu    sync.Mutex
 	lastReqTime  time.Time
 	throttleWait time.Duration
@@ -79,6 +80,7 @@ func NewTransitService(client *http.Client) *TransitService {
 		client:       client,
 		cache:        make(map[string]*cachedLine),
 		cacheTTL:     25 * time.Second,
+		fetchTimeout: 4 * time.Second,
 		throttleWait: 1100 * time.Millisecond, // Min 1.1s between outgoing calls to avoid HTTP 429
 		baseURL:      DefaultESHOTBaseURL,
 	}
@@ -108,7 +110,9 @@ func (s *TransitService) GetLiveBuses(ctx context.Context, lineNo string) (*Live
 	}
 
 	// 2. Fetch fresh telemetry with request throttle
-	freshResp, err := s.fetchFromESHOT(ctx, cleanLine)
+	fetchCtx, cancel := context.WithTimeout(ctx, s.fetchTimeout)
+	freshResp, err := s.fetchFromESHOT(fetchCtx, cleanLine)
+	cancel()
 	if err != nil {
 		// Graceful degradation: return stale cache if available
 		if found && c.response != nil {
@@ -144,7 +148,14 @@ func (s *TransitService) fetchFromESHOT(ctx context.Context, lineNo string) (*Li
 	s.requestMu.Lock()
 	elapsed := time.Since(s.lastReqTime)
 	if elapsed < s.throttleWait {
-		time.Sleep(s.throttleWait - elapsed)
+		timer := time.NewTimer(s.throttleWait - elapsed)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			s.requestMu.Unlock()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 	s.lastReqTime = time.Now()
 	baseURL := s.baseURL

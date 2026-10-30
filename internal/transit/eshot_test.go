@@ -156,3 +156,32 @@ func TestTransitService_RateLimitRetryAfter(t *testing.T) {
 		t.Errorf("expected bus 35001 after retry, got: %+v", res.Buses)
 	}
 }
+
+func TestTransitService_UpstreamTimeoutReturnsStaleStructuredResponse(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"HataVarMi":false,"HatOtobusKonumlari":[]}`))
+		}
+	}))
+	defer ts.Close()
+
+	svc := NewTransitService(ts.Client())
+	svc.SetBaseURL(ts.URL)
+	svc.fetchTimeout = 25 * time.Millisecond
+
+	started := time.Now()
+	response, err := svc.GetLiveBuses(context.Background(), "800")
+	if err != nil {
+		t.Fatalf("timeout should return a structured stale response: %v", err)
+	}
+	if !response.IsStale || response.TotalBuses != 0 {
+		t.Fatalf("expected empty stale fallback, got %+v", response)
+	}
+	if elapsed := time.Since(started); elapsed > 150*time.Millisecond {
+		t.Fatalf("upstream timeout was not bounded, elapsed %s", elapsed)
+	}
+}

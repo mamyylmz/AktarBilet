@@ -6,14 +6,18 @@
   "scripts": {
     "dev": "vite --host",
     "build": "vite build",
+    "android:debug": "vite build --mode android-debug && cap sync android && cd android && ./gradlew assembleDebug",
     "lint": "node lint.js",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/core": "^8.6.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.6.0",
     "@vitejs/plugin-react": "^4.3.4",
     "vite": "^5.4.14"
   }

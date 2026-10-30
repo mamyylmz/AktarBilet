@@ -92,7 +92,7 @@ test.describe('real API and PostgreSQL integration', () => {
     const nextSeq = Math.max(900001, Number(scalar("SELECT COALESCE(MAX(last_sequence_no), 0) FROM jw_validator_credentials WHERE validator_id='VAL_500T_01'") || 0) + 1);
     const tapData = {
       validator_id: 'VAL_500T_01', sequence_no: nextSeq, card_id: 'CARD_TAM_001',
-      line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
+      line_id: 'LINE_5', station_id: 'STAT_ESHOT_10177', direction: 1,
       tapped_at: '2026-10-24T14:00:00Z'
     };
     const response = await request.post(`${apiURL}/api/v1/validators/tap`, {

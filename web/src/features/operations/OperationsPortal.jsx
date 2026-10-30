@@ -10,13 +10,12 @@ export function OperationsPortal({
   selectedLine = '800',
   onSelectLine,
   liveTransitLoading = false,
+  liveTransitError = false,
+  onRefreshTransit,
   liveTransitMeta,
-  heatmapData = [],
-  heatmapError = false,
-  onFetchHeatmap,
   anomalies = [],
 }) {
-  const [activeTab, setActiveTab] = useState('map'); // 'map' | 'heatmap' | 'anomalies' | 'telemetry'
+  const [activeTab, setActiveTab] = useState('map'); // 'map' | 'anomalies' | 'telemetry'
 
   const busColumns = [
     {
@@ -89,16 +88,6 @@ export function OperationsPortal({
           Canlı Harita (ESHOT)
         </Button>
         <Button
-          variant={activeTab === 'heatmap' ? 'primary' : 'outline'}
-          size="sm"
-          onClick={() => {
-            setActiveTab('heatmap');
-            onFetchHeatmap();
-          }}
-        >
-          Isı Haritası
-        </Button>
-        <Button
           variant={activeTab === 'anomalies' ? 'primary' : 'outline'}
           size="sm"
           onClick={() => setActiveTab('anomalies')}
@@ -121,10 +110,11 @@ export function OperationsPortal({
             title="İzmir ESHOT Canlı Araç Takip Haritası (MapLibre & PMTiles)"
             subtitle="Resmî açık veri API'si üzerinden 800, 470 ve 35 numaralı hatların gerçek zamanlı koordinatları"
             action={
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   variant={selectedLine === '800' ? 'primary' : 'outline'}
                   size="sm"
+                  className="min-h-[44px]"
                   onClick={() => onSelectLine('800')}
                 >
                   800 Menemen-Bornova
@@ -132,6 +122,7 @@ export function OperationsPortal({
                 <Button
                   variant={selectedLine === '470' ? 'primary' : 'outline'}
                   size="sm"
+                  className="min-h-[44px]"
                   onClick={() => onSelectLine('470')}
                 >
                   470 Tınaztepe-Lozan
@@ -139,13 +130,43 @@ export function OperationsPortal({
                 <Button
                   variant={selectedLine === '35' ? 'primary' : 'outline'}
                   size="sm"
+                  className="min-h-[44px]"
                   onClick={() => onSelectLine('35')}
                 >
                   35 Ballıkuyu-Konak
                 </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="min-h-[44px]"
+                  onClick={onRefreshTransit}
+                  loading={liveTransitLoading}
+                  disabled={liveTransitLoading}
+                  aria-label={`${selectedLine} hattı araç konumlarını yenile`}
+                >
+                  Yenile
+                </Button>
               </div>
             }
           >
+            {liveTransitLoading && (
+              <p className="mb-3 text-sm text-muted" role="status" aria-live="polite">
+                {selectedLine} hattının araç konumları yükleniyor…
+              </p>
+            )}
+            {liveTransitError && (
+              <div role="alert" className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-danger/30 bg-surface-muted p-4">
+                <p className="text-sm text-danger">Canlı araç verisi alınamadı. Tekrar deneyebilirsiniz.</p>
+                <Button variant="outline" size="sm" className="min-h-[44px]" onClick={onRefreshTransit}>
+                  Tekrar dene
+                </Button>
+              </div>
+            )}
+            {liveTransitMeta?.is_stale && !liveTransitError && (
+              <p className="mb-3 text-sm text-warning" role="status">
+                ESHOT yanıt vermedi; son alınan araç verisi gösteriliyor.
+              </p>
+            )}
             <div className="map-wrapper mb-4">
               <MapLibreView
                 liveBuses={liveBuses}
@@ -178,39 +199,6 @@ export function OperationsPortal({
         </div>
       )}
 
-      {/* 2. Heatmap View */}
-      {activeTab === 'heatmap' && (
-        <Card
-          title="Yolcu Biniş Yoğunluk Isı Haritası"
-          subtitle="İstasyon ve durak bazında saatlik yolcu biniş yoğunluk analizi"
-        >
-          {heatmapError ? (
-            <div role="alert" className="p-6 bg-surface-muted border border-danger/30 rounded-lg text-center space-y-2">
-              <span className="text-3xl block" aria-hidden="true">⚠️</span>
-              <h4 className="font-semibold text-danger">Isı Haritası Verisi Alınamadı</h4>
-              <p className="text-sm text-muted">Sunucu bağlantısı sağlanamadı veya yoğunluk servisi yanıt vermedi.</p>
-              <Button variant="outline" size="sm" onClick={onFetchHeatmap}>
-                Tekrar Yükle
-              </Button>
-            </div>
-          ) : heatmapData.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {heatmapData.map((item, idx) => (
-                <div key={idx} className="p-4 bg-surface-muted rounded-lg border border-border">
-                  <span className="text-xs text-muted block">{item.station_name || item.station_id}</span>
-                  <span className="font-bold text-xl text-primary">{item.tap_count} Biniş</span>
-                  <span className="text-xs text-muted block mt-1">Yoğunluk: {item.density_level || 'Yüksek'}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-8 text-muted">
-              <p className="text-sm">Yoğunluk verisi yükleniyor...</p>
-            </div>
-          )}
-        </Card>
-      )}
-
       {/* 3. Anomalies List */}
       {activeTab === 'anomalies' && (
         <Card
@@ -229,29 +217,14 @@ export function OperationsPortal({
 
       {/* 4. Validator Telemetry */}
       {activeTab === 'telemetry' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
           <Card
             title="Validatör Cihaz Durumları"
-            subtitle="Filodaki 4 ana hat validatörünün anlık çevrimiçi/çevrimdışı bağlantı sağlığı"
+            subtitle="Bu görünüm yalnızca backend'den doğrulanmış cihaz telemetrisi gösterir"
           >
-            <div className="space-y-3">
-              {[
-                { id: 'VAL_500T_01', line: '500T Tuzla - Cevizlibağ', status: 'ONLINE', seq: 1042 },
-                { id: 'VAL_14ES_01', line: '14ES Kadıköy', status: 'ONLINE', seq: 852 },
-                { id: 'VAL_T1_01', line: 'T1 Tramvay Kabataş', status: 'ONLINE', seq: 2140 },
-                { id: 'VAL_VAPUR_01', line: 'Kadıköy-Eminönü Vapur', status: 'ONLINE', seq: 940 },
-              ].map((v) => (
-                <div key={v.id} className="flex justify-between items-center p-3 bg-surface-muted rounded-lg border border-border">
-                  <div>
-                    <span className="font-mono font-bold text-sm block">{v.id}</span>
-                    <span className="text-xs text-muted">{v.line}</span>
-                  </div>
-                  <div className="text-right">
-                    <span className="badge badge-success text-xs">Çevrimiçi (ONLINE)</span>
-                    <span className="text-xs font-mono text-muted block mt-1">Sıra No: #{v.seq}</span>
-                  </div>
-                </div>
-              ))}
+            <div className="rounded-lg border border-border bg-surface-muted p-4" role="status">
+              <span className="badge badge-warning">Telemetri verisi yok</span>
+              <p className="mt-2 text-sm text-muted">Bu API'de cihaz heartbeat'i, son sıra numarası veya son veri zamanı sunulmuyor. Çevrimiçi durumu ve hat eşlemesi gösterilmiyor.</p>
             </div>
           </Card>
 
@@ -260,18 +233,9 @@ export function OperationsPortal({
             subtitle="Çevrimdışı paket senkronizasyonu ve disk günlüğü telemetrisi"
           >
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 bg-surface-muted rounded-lg border border-border">
-                  <span className="text-xs text-muted block">Disk WAL Durumu</span>
-                  <span className="font-bold text-success text-lg">AKTİF & KALICI</span>
-                </div>
-                <div className="p-3 bg-surface-muted rounded-lg border border-border">
-                  <span className="text-xs text-muted block">Kuyruktaki Paket</span>
-                  <span className="font-mono font-bold text-foreground text-lg">0 / 100</span>
-                </div>
-              </div>
-              <div className="p-3 bg-surface-muted rounded-lg border border-border text-xs text-muted">
-                <p>Monotonik sıra numarası ve SHA-256 yük özeti doğrulandı. Mükerrer biniş kaybı: 0.</p>
+              <div className="rounded-lg border border-border bg-surface-muted p-4" role="status">
+                <span className="badge badge-warning">Durum doğrulanmadı</span>
+                <p className="mt-2 text-sm text-muted">Validator WAL ve kuyruk ölçümleri bu API'den alınamıyor; sayı veya kalıcılık durumu tahmin edilmiyor.</p>
               </div>
             </div>
           </Card>

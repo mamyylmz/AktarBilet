@@ -59,7 +59,7 @@ test.describe('T-1 Fare Engine Live Database & API Verification', () => {
     const baseSeq = Date.now();
     const res1 = await sendTap(request, {
       validatorId: 'VAL_500T_01', sequenceNo: baseSeq, cardId,
-      lineId: 'LINE_500T', stationId: 'STAT_AYRILIK', direction: 1
+      lineId: 'LINE_5', stationId: 'STAT_ESHOT_10177', direction: 1
     });
     expect(res1.status()).toBe(200);
     assertLedgerEquality(cardId);
@@ -68,7 +68,7 @@ test.describe('T-1 Fare Engine Live Database & API Verification', () => {
     // Ride 2: 2000 kuruş -> Balance would be -3500 kuruş (Within -50 TL tolerance)
     const res2 = await sendTap(request, {
       validatorId: 'VAL_14ES_01', sequenceNo: baseSeq + 1, cardId,
-      lineId: 'LINE_14ES', stationId: 'STAT_KADIKOY', direction: 1
+      lineId: 'LINE_10', stationId: 'STAT_ESHOT_10145', direction: 1
     });
     expect(res2.status()).toBe(200);
     assertLedgerEquality(cardId);
@@ -81,7 +81,7 @@ test.describe('T-1 Fare Engine Live Database & API Verification', () => {
     // Next tap of 2000 kuruş would drop balance to -6500 kuruş (< -5000 kuruş) -> Must reject!
     const res3 = await sendTap(request, {
       validatorId: 'VAL_T1_01', sequenceNo: baseSeq + 2, cardId,
-      lineId: 'LINE_T1', stationId: 'STAT_KABATAS', direction: 1
+      lineId: 'LINE_15', stationId: 'STAT_ESHOT_10008', direction: 1
     });
     // Rejection: either HTTP 200 with status "REJECTED" or error status
     if (res3.status() === 200) {
@@ -107,7 +107,7 @@ test.describe('T-1 Fare Engine Live Database & API Verification', () => {
     // 1. Initial ride on Line 500T (Direction 1) -> 2000 kuruş
     const res1 = await sendTap(request, {
       validatorId: 'VAL_500T_01', sequenceNo: baseSeq, cardId,
-      lineId: 'LINE_500T', stationId: 'STAT_AYRILIK', direction: 1,
+      lineId: 'LINE_5', stationId: 'STAT_ESHOT_10177', direction: 1,
       tappedAt: t0.toISOString()
     });
     expect(res1.status()).toBe(200);
@@ -117,7 +117,7 @@ test.describe('T-1 Fare Engine Live Database & API Verification', () => {
     const t1 = new Date(t0.getTime() + 20 * 60 * 1000);
     const res2 = await sendTap(request, {
       validatorId: 'VAL_14ES_01', sequenceNo: baseSeq + 1, cardId,
-      lineId: 'LINE_14ES', stationId: 'STAT_KADIKOY', direction: 1,
+      lineId: 'LINE_10', stationId: 'STAT_ESHOT_10145', direction: 1,
       tappedAt: t1.toISOString()
     });
     expect(res2.status()).toBe(200);
@@ -128,7 +128,7 @@ test.describe('T-1 Fare Engine Live Database & API Verification', () => {
     const t2 = new Date(t0.getTime() + 40 * 60 * 1000);
     const res3 = await sendTap(request, {
       validatorId: 'VAL_500T_01', sequenceNo: baseSeq + 2, cardId,
-      lineId: 'LINE_500T', stationId: 'STAT_AYRILIK', direction: 2,
+      lineId: 'LINE_5', stationId: 'STAT_ESHOT_10177', direction: 2,
       tappedAt: t2.toISOString()
     });
     expect(res3.status()).toBe(200);
@@ -159,17 +159,17 @@ test.describe('T-1 Fare Engine Live Database & API Verification', () => {
     // E1
     await sendTap(request, {
       validatorId: 'VAL_500T_01', sequenceNo: baseSeq + 1, cardId: cardChrono,
-      lineId: 'LINE_500T', stationId: 'STAT_AYRILIK', direction: 1, tappedAt: t1.toISOString()
+      lineId: 'LINE_5', stationId: 'STAT_ESHOT_10177', direction: 1, tappedAt: t1.toISOString()
     });
     // E2
     await sendTap(request, {
       validatorId: 'VAL_14ES_01', sequenceNo: baseSeq + 2, cardId: cardChrono,
-      lineId: 'LINE_14ES', stationId: 'STAT_KADIKOY', direction: 1, tappedAt: t2.toISOString()
+      lineId: 'LINE_10', stationId: 'STAT_ESHOT_10145', direction: 1, tappedAt: t2.toISOString()
     });
     // E3
     await sendTap(request, {
       validatorId: 'VAL_T1_01', sequenceNo: baseSeq + 3, cardId: cardChrono,
-      lineId: 'LINE_T1', stationId: 'STAT_KABATAS', direction: 1, tappedAt: t3.toISOString()
+      lineId: 'LINE_15', stationId: 'STAT_ESHOT_10008', direction: 1, tappedAt: t3.toISOString()
     });
 
     assertLedgerEquality(cardChrono);
@@ -181,17 +181,17 @@ test.describe('T-1 Fare Engine Live Database & API Verification', () => {
     // Send E3 (at t3)
     await sendTap(request, {
       validatorId: 'VAL_T1_01', sequenceNo: baseSeq + 10, cardId: cardReverse,
-      lineId: 'LINE_T1', stationId: 'STAT_KABATAS', direction: 1, tappedAt: t3.toISOString()
+      lineId: 'LINE_15', stationId: 'STAT_ESHOT_10008', direction: 1, tappedAt: t3.toISOString()
     });
     // Send E2 (at t2)
     await sendTap(request, {
       validatorId: 'VAL_14ES_01', sequenceNo: baseSeq + 11, cardId: cardReverse,
-      lineId: 'LINE_14ES', stationId: 'STAT_KADIKOY', direction: 1, tappedAt: t2.toISOString()
+      lineId: 'LINE_10', stationId: 'STAT_ESHOT_10145', direction: 1, tappedAt: t2.toISOString()
     });
     // Send E1 (at t1)
     await sendTap(request, {
       validatorId: 'VAL_500T_01', sequenceNo: baseSeq + 12, cardId: cardReverse,
-      lineId: 'LINE_500T', stationId: 'STAT_AYRILIK', direction: 1, tappedAt: t1.toISOString()
+      lineId: 'LINE_5', stationId: 'STAT_ESHOT_10177', direction: 1, tappedAt: t1.toISOString()
     });
 
     assertLedgerEquality(cardReverse);
@@ -214,8 +214,8 @@ test.describe('T-1 Fare Engine Live Database & API Verification', () => {
         validatorId: 'VAL_500T_01',
         sequenceNo: baseSeq + i,
         cardId,
-        lineId: 'LINE_500T',
-        stationId: 'STAT_AYRILIK',
+        lineId: 'LINE_5',
+        stationId: 'STAT_ESHOT_10177',
         direction: 1,
         idempKey: `IDEMP_PARALLEL_${cardId}_${i}`
       });
@@ -241,7 +241,7 @@ test.describe('T-1 Fare Engine Live Database & API Verification', () => {
 
     const payload = {
       validator_id: 'VAL_500T_01', sequence_no: seq, card_id: cardId,
-      line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
+      line_id: 'LINE_5', station_id: 'STAT_ESHOT_10177', direction: 1,
       tapped_at: new Date().toISOString()
     };
     const body = JSON.stringify(payload);

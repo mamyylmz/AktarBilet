@@ -41,7 +41,7 @@ function storedDeviceSecret(validatorID) {
   return scalar(`SELECT secret_key FROM jw_validator_credentials WHERE validator_id='${validatorID}'`);
 }
 
-function tapBody({ validatorID, sequence, cardID, lineID = 'LINE_500T', stationID = 'STAT_AYRILIK', direction = 1, tappedAt }) {
+function tapBody({ validatorID, sequence, cardID, lineID = 'LINE_5', stationID = 'STAT_ESHOT_10177', direction = 1, tappedAt }) {
   return {
     validator_id: validatorID,
     sequence_no: sequence,
@@ -204,7 +204,7 @@ test.describe('Retest 3 PostgreSQL-backed validator security', () => {
     const cardID = unique('R3_ASSIGN_CARD').replaceAll('-', '_');
     createFundedCard(cardID);
     const rawBody = JSON.stringify(tapBody({
-      validatorID, sequence, cardID, lineID: 'LINE_T1', stationID: 'STAT_KABATAS'
+      validatorID, sequence, cardID, lineID: 'LINE_15', stationID: 'STAT_ESHOT_10008'
     }));
     const headers = sign(rawBody, validatorID, sequence, nonce, storedDeviceSecret(validatorID));
     const before = snapshot(cardID, validatorID, nonce, idempotencyKey);
@@ -224,7 +224,7 @@ test.describe('Retest 3 PostgreSQL-backed validator security', () => {
     const cardID = unique('R3_REVOKED_CARD').replaceAll('-', '_');
     createFundedCard(cardID);
     const rawBody = JSON.stringify(tapBody({
-      validatorID, sequence, cardID, lineID: 'LINE_14ES', stationID: 'STAT_KADIKOY'
+      validatorID, sequence, cardID, lineID: 'LINE_10', stationID: 'STAT_ESHOT_10145'
     }));
     const headers = sign(rawBody, validatorID, sequence, nonce, storedDeviceSecret(validatorID));
     sql(`UPDATE jw_validator_credentials SET is_revoked=true WHERE validator_id='${validatorID}'`);

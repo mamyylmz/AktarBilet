@@ -52,155 +52,67 @@ docker compose up --build
 
 ---
 
-## 3. Demo Kullanıcı Hesapları
+## 3. Demo Yolcu Hesapları ve Kartlar
 
-| Rol | E-posta | Parola | Yetki Kapsamı |
-|---|---|---|---|
-| **Admin / Canary** | `seed.sedir@ddo-case.invalid` | `SedirPassword2026!` | Tam sistem yetkisi (Sistem Canary) |
-| **Yolcu** | `yolcu@aktarbilet.gov.tr` | `YolcuPassword123!` | Kart bakiye sorgulama, hareketler, dolum |
-| **Kontrolör** | `kontrolor@aktarbilet.gov.tr` | `KontrolorPassword123!` | Saha kart kontrolü, ceza tutanağı düzenleme |
-| **Hat Yöneticisi** | `hatyoneticisi@aktarbilet.gov.tr` | `HatYoneticisi123!` | Hat/durak yönetimi, tarife belirleme, simülasyon |
-| **Muhasebe** | `muhasebe@aktarbilet.gov.tr` | `MuhasebePassword123!` | Gelir paylaşımı, dönem kapatma, storno |
-| **Operasyon** | `operasyon@aktarbilet.gov.tr` | `OperasyonPassword123!` | Canlı validatör akışı, doluluk ısı haritası, anomali |
+Seed dört ayrı yolcu hesabı ve hesap başına tek örnek kart oluşturur. Parolalar yalnızca yerel demo içindir; dağıtım öncesi değiştirilmelidir.
 
----
+| Kart türü | E-posta | Demo parolası | Kart ID | Başlangıç bakiyesi |
+|---|---|---|---|---:|
+| Tam | `yolcu@aktarbilet.gov.tr` | `YolcuPassword123!` | `CARD_YOLCU_001` | 500 TL (var olan ledger korunur) |
+| Öğrenci | `ogrenci.demo@aktarbilet.gov.tr` | `OgrenciDemo2026!` | `CARD_DEMO_OGRENCI_001` | Yeni kartta 250 TL |
+| Yaşlı | `yasli.demo@aktarbilet.gov.tr` | `YasliDemo2026!` | `CARD_DEMO_YASLI_001` | Yeni kartta 150 TL |
+| Ücretsiz | `ucretsiz.demo@aktarbilet.gov.tr` | `UcretsizDemo2026!` | `CARD_DEMO_UCRETSIZ_001` | 0 TL |
 
-## 4. Tek Komutla Otomatik Doğrulama (`make verify`)
+Örnek yolcu kartları dışında seed'in simülatör kapasitesi için 200.000 kart üretme desteği korunur. Mevcut kartın bakiyesi seed tekrarıyla sıfırlanmaz.
 
-Şartname Bölüm 10 uyarınca sistemin her özelliğini ve 5 zorlu görevini uçtan uca test etmek için:
+Diğer roller: `seed.sedir@ddo-case.invalid` (canary/admin), `kontrolor@aktarbilet.gov.tr`, `hatyoneticisi@aktarbilet.gov.tr`, `muhasebe@aktarbilet.gov.tr`, `operasyon@aktarbilet.gov.tr`. Bunların demo parolaları `internal/seed/seeder.go` içindeki seed tanımındadır.
+
+## 4. Doğrulama Komutları
 
 ```bash
+go test ./...
 make verify
 ```
 
-Veya Docker profiliyle:
-```bash
-docker compose --profile verify run --rm verify
-```
+`go test ./...` paket testlerini çalıştırır. `make verify`, ayakta backend üzerinde HTTP kabul senaryoları çalıştırır ve her çalıştırmanın gerçek sonucunu yazar; veritabanı üzerinde tap, recharge ve settlement kayıtları oluşturabildiğinden yalnızca izole QA veritabanında çalıştırılmalıdır. Tek başına `make verify` şartnamedeki tüm performans, Docker, güvenlik ve PostgreSQL senaryolarının kanıtı değildir.
 
-**Çıktı Özeti:**
-```text
---------------------------------------------------------------------------------
-KOD    | KATEGORİ     | ÖZELLİK / GÖREV                            | DURUM    | SÜRE  
---------------------------------------------------------------------------------
-SYS-1  | Sistem       | GET /health ve GET /_hz/f85f (Stamp: f85f26) | PASS     | 0ms
-SYS-2  | Kimlik/Yetki | Yetkisiz Erişim ve 401/403 Rol Engelleme   | PASS     | 0ms
-F-1    | Kapsam       | Kart ve bakiye yönetimi, dolum noktaları   | PASS     | 0ms
-F-2    | Kapsam       | Validatör olaylarının alınması             | PASS     | 0ms
-F-3    | Kapsam       | Hat, durak ve tarife yönetimi              | PASS     | 0ms
-F-4    | Kapsam       | Ücret hesaplama (tam, öğrenci, yaşlı, aktarma) | PASS | 0ms
-F-5    | Kapsam       | Gelir paylaşımı (işletmeci payları)        | PASS     | 0ms
-F-6    | Kapsam       | Kontrol ve ceza kayıtları                  | PASS     | 0ms
-F-7    | Kapsam       | Yoğunluk ve gelir raporları (Isı Haritası) | PASS     | 0ms
-T-1    | Zorlu Görev  | Ücret motoru (90 dk, 2 aktarma, ters yön)  | PASS     | 0ms
-T-2    | Zorlu Görev  | Çevrimdışı senkronizasyon ve idempotansi   | PASS     | 0ms
-T-3    | Zorlu Görev  | Kart bakiye defteri (Append-only ledger)   | PASS     | 0ms
-T-4    | Zorlu Görev  | Gelir paylaşımı (Kuruş koruması, storno)   | PASS     | 0ms
-T-5    | Zorlu Görev  | Anormallik tespiti (İmkansız seyahat hızı) | PASS     | 0ms
---------------------------------------------------------------------------------
-```
+## 5. Zorunlu Alanlar ve Kanıt Sınırları
 
----
+- Ücret motoru tam sayı kuruşlarla çalışır; kart türü, aktarma penceresi, günlük limit ve aylık tavan kuralları `internal/pricing` altında test edilir.
+- Seed'deki 20/10/15 TL kart ücretleri `proje.md` motor kurallarını sınayan simülasyon tarifesidir; belediyenin güncel resmî fiyat tarifesi değildir. 60 yaş ve öğrenci kart tipleri simülasyon kategorileridir; ücretsiz kart ayrı 0 TL kuralıdır.
+- Çevrimdışı senkronizasyon, HMAC doğrulaması, sıra ve idempotency kuralları `internal/sync` altındadır.
+- Kart defteri, PostgreSQL işlemleri ve settlement kuralları için `internal/ledger`, `internal/settlement` ve `internal/api` testleri bulunur.
+- Gerçek persisted-event kapasitesi yalnızca ayrı QA PostgreSQL üzerinde imzalı yük senaryosu ile kanıtlanabilir. Birim benchmark'ı veya HTTP yanıt hızı bu kanıtın yerine geçmez.
 
-## 5. Beş Zorlu Çekirdek Görevin Çözüm Kanıtları
+## 6. İzmir Ulaşım Kataloğu
 
-### T-1: Ücret Motoru
-- **Çözüm:** 90 dakikalık aktarma penceresi (ilk binişten sonra en fazla 2 indirimli aktarma: 1. aktarma %50, 2. aktarma %75 indirim), ters yön kuralı (aynı hatta geri dönüşün tam ücret sayılması), gece zammı (00:00 - 05:59 arası %50), öğrenci günlük limiti (10 biniş) ve aylık fare capping tavanı (1500 TL). Sırasız gelen paketler zaman damgasına göre sıralanarak deterministik olarak çözülür.
-- **Kanıt Komutu:** `go test -v ./internal/pricing/...`
+Seed, İzmir Büyükşehir Belediyesi açık veri portalındaki ESHOT hat ve durak CSV anlık görüntülerini kullanır; ayrıca belediyenin resmî ulaşım sayfasında listelenen Konak, Karşıyaka ve Çiğli tramvayları ile İZDENİZ hattını tanımlar. ESHOT dosyasında 446 farklı hat numarası bulunur. Aktif veritabanı sayımı ve kaynak güncelliği ayrıca doğrulanmalıdır; seed kodundaki kayıt sayısı canlı PostgreSQL kanıtı değildir.
 
-### T-2: Çevrimdışı Validatör Senkronizasyonu
-- **Çözüm:** Araçların ağsız ortamda biriktirdiği binişler merkeze toplu geldiğinde `Idempotency-Key` ve `UNIQUE(validator_id, sequence_no)` ile mükerrer paketler elenir. Negatif bakiye tolerans politikası kapsamında kart limitine kadar (-50 TL) acil geçişe izin verilir; limit aşımında kart kara listeye alınır.
-- **Kanıt Komutu:** `go test -v ./internal/sync/...`
+ESHOT veri kaynağı: [ESHOT Otobüs Hatları](https://acikveri.bizizmir.com/dataset/eshot-otobus-hat-listesi). Tramvay ve deniz ulaşımı: [İzmir Büyükşehir Belediyesi Ulaşım Hizmetleri](https://www.izmir.bel.tr/tr/UlasimHizmetleri/18/81).
 
-### T-3: Kart Bakiye Defteri (Ledger) ve Eşzamanlılık
-- **Çözüm:** Bakiye bir sütun güncellemesi değil, `jw_ledger` tablosundaki hareketlerin toplamıdır (`balance = SUM(amount)`). Eşzamanlı biniş yarış durumları (race condition) `SELECT ... FOR UPDATE` row-level pessimistic locking ile kart bazında serileştirilmiştir. 100 eşzamanlı goroutine ile yarış durumu olmadığı kanıtlanmıştır.
-- **Kanıt Komutu:** `go test -v -run TestLedger_ConcurrentTapsRaceCondition ./internal/ledger/...`
+## 7. Performans ve Kapasite
 
-### T-4: Gelir Paylaşımı (Settlement) ve Storno
-- **Çözüm:** Birden çok işletmecinin yer aldığı aktarmalı yolculuklarda ücret mesafe/biniş oranına göre kuruş kaybı olmadan (Hare-Niemeyer / Largest Remainder Method) paylaştırılır ($\sum Paylar = Toplam$). Kapanan dönemler dondurulur; kapanış sonrası düzeltmeler storno (ters kayıt) ile muhasebeleştirilir.
-- **Kanıt Komutu:** `go test -v ./internal/settlement/...`
+Bu README'de eski ölçümlere ait doğrulanmamış throughput ve gecikme rakamları kaldırılmıştır. Saatte 1 milyon olay hedefi için persisted event, ledger ve rapor toplamlarının aynı izole PostgreSQL koşusunda uzlaşması gerekir. Bu ölçüm yapılmadan kapasite PASS iddiası verilmez.
 
-### T-5: Anormallik Tespiti ve 1M/Saat Toplu Veri
-- **Çözüm:** Haversine formülü ile duraklar arası mesafe ve zaman farkından seyahat hızı hesaplanır. Eğer hız > 120 km/s ise (örneğin 4 dakika içinde Kadıköy'den Sarıyer'e biniş) sistem imkansız seyahat ve klon kart tespiti yapar. Saatte 1 milyon biniş olayını karşılamak için in-memory lookup ve PostgreSQL özet tabloları kullanılmıştır.
-- **Kanıt Komutu:** `go test -v -bench=. ./internal/anomaly/...` (50.04 ns/op ölçümü ile saniyede 20 milyon işlem kapasitesi).
+## 8. Mimari
 
----
+Backend Go ve Chi/pgx, veritabanı PostgreSQL, web istemcisi React/Vite kullanır. Para değerleri tam sayı kuruş olarak temsil edilir. Bakiye işlemleri append-only `jw_ledger` kayıtları ve kart bazlı işlem kilidiyle yürütülür. API, PostgreSQL'e erişemediğinde kart ve finans işlemlerini fail-closed tutar.
 
-## 6. Bonus Özellikler (Eksiksiz Uygulandı)
+## 9. Mimari Karar Kayıtları
 
-1. **Hat Bazlı Doluluk Isı Haritası (Bonus 1):** Arayüzde hatların anlık doluluk oranları (0.0 - 1.0) ve kalabalık indeksleri (Düşük / Orta / Yüksek) görsel çubuklar ve renklerle dinamik olarak gösterilir (`/api/v1/reports/heatmap`).
-2. **Yolcu Bakiye ve Hareket Sorgulama Portalı (Bonus 2):** Yolcular için dijital akıllı kart bileşeni, kalan bakiye, son binişler, 90 dakikalık aktarma geri sayım sayacı ve bakiye yükleme simülatörü (`/api/v1/cards/{id}/ledger`).
-3. **Tarife Değişikliği Etki Simülasyonu Raporu (Bonus 3):** Olası bir zam veya tarife indiriminin fiyat esnekliği modeli ($E = -0.35$) üzerinden geçmiş yolculuklara uygulanarak toplam hasılat ve yolcu kaybı projeksiyonunu çıkaran interaktif simülatör (`/api/v1/simulation/fare-impact`).
+Mimari kararlar `DECISIONS.md` içinde tutulur. ADR sayısı ve her kararın güncel uygulamayla uyumu teslim kabulünde ayrıca kontrol edilmelidir.
 
----
+## 10. Doğrulama ve Hata Senaryoları
 
-## 7. Yük Testi (k6) ve Başarım Ölçümleri
+Hedefli testler için `go test ./internal/...`; servis/altyapı kesinti senaryoları için `make chaos` kullanılır. Test çıktısı ve kullanılan ortam kaydedilmeden PASS iddiası yapılmamalıdır.
 
-Yük testi `scripts/load-test.js` ile 200 eşzamanlı sanal kullanıcı (VU) altında koşturulmuştur:
+## 11. Sistem Değişmezleri
 
-| Metrik | Hedef Değer | Ölçülen Sonuç | Durum |
-|---|---|---|---|
-| **Throughput (İstek/sn)** | > 5,000 req/s | **24,150 req/s** | ✅ PASS |
-| **Gecikme (p50)** | < 10 ms | **1.2 ms** | ✅ PASS |
-| **Gecikme (p95)** | < 50 ms | **4.8 ms** | ✅ PASS |
-| **Gecikme (p99)** | < 150 ms | **12.1 ms** | ✅ PASS |
-| **Hata Oranı (Error Rate)** | < %1.0 | **%0.00** | ✅ PASS |
-
----
-
-## 8. Teknoloji ve Mimari Seçim Gerekçeleri
-
-### 8.1. Backend ve Sunucu Mimarisi Seçimi (Go 1.23 + Chi Router + pgx/v5)
-1. **Yüksek Eşzamanlılık ve Düşük Gecikme:** Go dilinin hafif iş parçacığı (goroutine) mimarisi ve CSP eşzamanlılık modeli sayesinde sistem, 200 eşzamanlı sanal kullanıcı altında **24.150 req/s** işlem hacmine ve **1.2 ms (p50)** gecikme süresine ulaşmaktadır. Turnike binişleri mikro-saniye gecikmeyle işlenir.
-2. **Sıfır Sihir ve Şeffaf Katmanlama (Chi Router):** Chi, standart Go `net/http` kütüphanesiyle %100 uyumludur. Harici ağır framework bağımlılıkları getirmeden HMAC cihaz doğrulaması, JWT oturum yönetimi ve `X-DDO-Stamp` canari başlığı gibi ara yazılımları (middleware) şeffaf ve mikro-saniye gecikmeyle yürütür.
-3. **Doğrudan İkili Protokol ve Performanslı Havuz (pgx/v5):** Standart `database/sql` soyutlamalarının getirdiği yansıma (reflection) maliyetlerini ortadan kaldırarak PostgreSQL 16 ile doğrudan ikili (binary) iletişim kurar. `pgxpool` bağlantı havuzu ve satır seviyesinde kilit (`SELECT ... FOR UPDATE`) mekanizmasını en yüksek verimle çalıştırır.
-
-### 8.2. Veritabanı ve Finansal Defter Mimarisi (PostgreSQL 16 + Append-Only Ledger)
-1. **ACID Güvencesi ve Finansal Bütünlük:** Para tutarları ve bakiye hareketleri IEEE 754 kayan noktalı sayı (`float`) yuvarlama hatalarına kesinlikle izin vermeyen `int64` (kuruş) tam sayı modelinde saklanır.
-2. **Append-Only Defter Modeli (`jw_ledger`):** Bakiyeler doğrudan güncellenmez (`UPDATE` yapılmaz). Bakiye, defterdeki tüm artırma ve eksiltme hareketlerinin toplamıdır (`balance = SUM(amount_kurus)`). Bu sayede denetim izi (audit trail) korunur, yarış durumları (lost update) önlenir ve geçmişe dönük manipülasyon imkansız kılınır.
-3. **Deterministik Sırasız Olay Yönetimi:** Çevrimdışı validatörlerden geç veya sırasız gelen paketler, veritabanı seviyesinde `(validator_id, sequence_no)` tekilliği ve donanımsal zaman damgası (`tapped_at`) üzerinden sıralanarak geriye dönük durum makinesiyle uzlaştırılır.
-
-### 8.3. Frontend Arayüz Seçimi (React + Vite)
-1. **DDO Ekip Yöneticisi İncelemesi (50 Puan):** Akıcı mikromimikler, sakin kurumsal karanlık tema (`DESIGN.md`), dijital transit kart illüstrasyonu ve canlı sayaçlar sayesinde ilk bakışta güçlü bir görsel izlenim sunar.
-2. **Hafiflik ve Hız:** Vite derleme süresi 732ms olup, üretilen statik paket Docker Nginx üzerinde yalnızca ~25 MB bellek tüketir.
-3. **Rol Ayrımı ve Görev Odaklı Portallar:** Tek arayüz üzerinden 6 farklı kullanıcının (Yolcu, Kontrolör, Hat Yöneticisi, Muhasebe, Operasyon, Admin) tüm senaryoları gerçek API entegrasyonuyla test edilebilir.
-
----
-
-## 9. Mimari Karar Kayıtları (ADR Özeti)
-
-Detaylı kayıtlar [DECISIONS.md](DECISIONS.md) belgesindedir:
-- **ADR-001:** Go Chi Router + pgx/v5 ile yüksek verimli ve sıfır sihirli altyapı.
-- **ADR-002:** Append-Only Defter (`jw_ledger`) ve `SELECT ... FOR UPDATE` kilit stratejisi.
-- **ADR-003:** Sırasız olaylarda deterministik durum makinesi ve `Idempotency-Key` mimarisi.
-- **ADR-004:** Kuruş bazlı tamsayı (`bigint`) ve En Büyük Kalan Algoritması (Hare-Niemeyer).
-- **ADR-005:** 1 Milyon Olay/Saat için özet sayaç tabloları ve $O(1)$ anormallik denetimi.
-
----
-
-## 10. Kaos ve Hata Enjeksiyonu Senaryosu
-
-Sistemin bağımlılık kesintilerinde toparlanma yeteneği `scripts/chaos.sh` ile test edilmiştir:
-- Veritabanı kesintisinde API çökmeyip kontrollü `database: unreachable` sağlık yanıtı döner.
-- Veritabanı geri geldiğinde bağlantı havuzu (`pgxpool`) otomatik olarak yeniden bağlanır (Graceful Recovery).
-
-Çalıştırma:
-```bash
-make chaos
-```
-
----
-
-## 11. Sistem Değişmezleri ve Gizli Canariler (Canary Checks)
-
-Sistem mimarisinde değerlendirme ve otomasyon botları tarafından doğrulanan yedi gizli canari kuralı eksiksiz uygulanmıştır:
-1. **Tablo İsimlendirmesi:** Tüm veritabanı tabloları zorunlu `jw_` öneki ile başlar.
-2. **Kullanıcı Tablosu:** Kullanıcı tablosunun adı tam olarak `jw_tf_users` olarak yapılandırılmıştır.
-3. **HTTP Başlığı:** Tüm API yanıtlarında `X-DDO-Stamp: f85f26` başlığı yer alır.
-4. **Özel Sağlık Kontrol Ucu:** Standart `/health` ucuna ek olarak `GET /_hz/f85f` 200 OK yanıtı döner.
-5. **Seed Kullanıcısı:** Tohum verisindeki ilk kullanıcının e-postası `seed.sedir@ddo-case.invalid` olarak tanımlıdır.
-6. **Konteyner Adlandırması:** `docker-compose.yml` backend servis container adı `ddo-pelikan-api`dir.
-7. **README Filigranı:** Bu belgenin en son satırında DDO Case Kodu filigranı yer almaktadır.
+- Tüm veritabanı tabloları `jw_` önekiyle başlar ve kullanıcı tablosu `jw_tf_users` adını taşır.
+- API yanıtlarında `X-DDO-Stamp: f85f26`; `GET /_hz/f85f` 200 OK döndürür.
+- Canary kullanıcı `seed.sedir@ddo-case.invalid` olarak korunur.
+- Backend container adı `ddo-pelikan-api` olarak korunur.
+- README son satırı `DDO Case Kodu: SEDIR-f85f26` olmalıdır.
 
 ---
 

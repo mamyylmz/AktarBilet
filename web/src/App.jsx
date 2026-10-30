@@ -9,6 +9,16 @@ import { LegalModal } from './features/public/LegalModal.jsx';
 import { HomePage } from './features/public/HomePage.jsx';
 import { PassengerPortal } from './features/passenger/PassengerPortal.jsx';
 import { api } from './services/api.js';
+import { formatDateTime } from './lib/formatters.js';
+
+const parseTLAmountToKurus = (value) => {
+  const match = String(value ?? '').trim().replace(',', '.').match(/^(\d+)(?:\.(\d{1,2}))?$/);
+  if (!match) return null;
+  const whole = Number(match[1]);
+  const fraction = Number((match[2] || '').padEnd(2, '0'));
+  const amount = whole * 100 + fraction;
+  return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
+};
 
 // Section 18: Code-splitting and React.lazy for portal components to minimize TBT and initial bundle size
 const InspectorPortal = React.lazy(() =>
@@ -96,22 +106,16 @@ export default function App() {
   const loginButtonRef = useRef(null);
 
   // 4. Passenger Card & Ledger State
-  const [card, setCard] = useState(() => {
-    const savedKurus = typeof window !== 'undefined' ? localStorage.getItem('card_balance_kurus') : null;
-    const initialKurus = savedKurus ? Number(savedKurus) : 50000;
-    return {
-      id: 'CARD_YOLCU_001',
-      balance_kurus: initialKurus,
-      balance_tl: `${(initialKurus / 100).toFixed(2)} ₺`,
-      card_type: 'tam',
-    };
-  });
-
+  const [card, setCard] = useState(null);
   const [ledger, setLedger] = useState([]);
+  const [cardDataLoading, setCardDataLoading] = useState(false);
+  const [cardDataError, setCardDataError] = useState('');
+  const cardRefreshRequestRef = useRef(0);
 
   const [transferTimer, setTransferTimer] = useState(0);
   const [transferLevel, setTransferLevel] = useState(0);
   const [rechargeLoading, setRechargeLoading] = useState(false);
+  const [tapLoading, setTapLoading] = useState(false);
 
   // 90 min countdown timer effect
   useEffect(() => {
@@ -138,11 +142,13 @@ export default function App() {
   const [settlementData, setSettlementData] = useState(null);
   const [loadingSettlements, setLoadingSettlements] = useState(false);
   const [closingPeriod, setClosingPeriod] = useState(false);
+  const [addingSubsidyAdjustment, setAddingSubsidyAdjustment] = useState(false);
 
   // 6. Inspector State
   const [queriedCard, setQueriedCard] = useState(null);
   const [queryCardLoading, setQueryCardLoading] = useState(false);
   const [queryCardError, setQueryCardError] = useState(null);
+  const queryCardRequestRef = useRef(0);
   const [penalties, setPenalties] = useState([]);
   const [penaltyLoading, setPenaltyLoading] = useState(false);
 
@@ -158,10 +164,15 @@ export default function App() {
   const [liveBuses, setLiveBuses] = useState([]);
   const [liveTransitMeta, setLiveTransitMeta] = useState(null);
   const [liveTransitLoading, setLiveTransitLoading] = useState(false);
+  const [liveTransitError, setLiveTransitError] = useState(false);
+  const liveTransitRequestRef = useRef(0);
 
   // Heatmap State
   const [heatmapData, setHeatmapData] = useState([]);
   const [heatmapError, setHeatmapError] = useState(false);
+  const [heatmapLoading, setHeatmapLoading] = useState(false);
+  const [heatmapUpdatedAt, setHeatmapUpdatedAt] = useState(null);
+  const heatmapRequestRef = useRef(0);
 
   // Toast Notification State
   const [toast, setToast] = useState(null);
@@ -182,37 +193,56 @@ export default function App() {
 
   // Fetch live buses from ESHOT endpoint
   const fetchLiveBuses = async (lineNo) => {
+    const requestID = ++liveTransitRequestRef.current;
     setLiveTransitLoading(true);
+    setLiveTransitError(false);
+    setLiveBuses([]);
+    setLiveTransitMeta(null);
     try {
       const data = await api.getLiveBuses(lineNo);
-      if (data && data.buses) {
+      if (!data || !Array.isArray(data.buses)) throw new Error('Canlı araç verisi geçersiz');
+      if (requestID === liveTransitRequestRef.current) {
         setLiveBuses(data.buses);
         setLiveTransitMeta({
-          line_number: lineNo,
+          line_number: data.line_no || lineNo,
           total_buses: data.buses.length,
-          retrieved_at: data.retrieved_at || new Date().toISOString(),
-          attribution: 'İzmir Büyükşehir Belediyesi ESHOT Açık Veri',
+          retrieved_at: data.retrieved_at || null,
+          attribution: data.attribution || 'İzmir Büyükşehir Belediyesi ESHOT Açık Veri',
+          is_stale: Boolean(data.is_stale),
         });
       }
     } catch {
-      // Keep existing data or fallback
+      if (requestID === liveTransitRequestRef.current) {
+        setLiveTransitError(true);
+      }
     } finally {
-      setLiveTransitLoading(false);
+      if (requestID === liveTransitRequestRef.current) {
+        setLiveTransitLoading(false);
+      }
     }
   };
 
   // Fetch heatmap data with strict array normalization (Section 12.2)
   const fetchHeatmap = async () => {
+    const requestID = ++heatmapRequestRef.current;
+    setHeatmapLoading(true);
     setHeatmapError(false);
     try {
       const res = await fetch('/api/v1/reports/heatmap');
       if (!res.ok) throw new Error('Yoğunluk verisi alınamadı');
       const data = await res.json();
       const items = Array.isArray(data) ? data : (data?.items || data?.stations || []);
-      setHeatmapData(items);
+      if (requestID === heatmapRequestRef.current) {
+        setHeatmapData(items);
+        setHeatmapUpdatedAt(new Date().toISOString());
+      }
     } catch {
-      setHeatmapError(true);
-      setHeatmapData([]);
+      if (requestID === heatmapRequestRef.current) {
+        setHeatmapError(true);
+        setHeatmapData([]);
+      }
+    } finally {
+      if (requestID === heatmapRequestRef.current) setHeatmapLoading(false);
     }
   };
 
@@ -250,39 +280,51 @@ export default function App() {
     }
   };
 
-  // Centralized Card and Ledger refresh helper
-  const refreshCardData = async (cardId = 'CARD_YOLCU_001') => {
+  // Card and ledger are read in one API/DB snapshot; stale responses cannot replace newer account data.
+  const refreshCardData = async (requestedCardID = null, tokenOverride = getActiveToken()) => {
+    const requestID = ++cardRefreshRequestRef.current;
+    if (!tokenOverride) {
+      setCard(null);
+      setLedger([]);
+      setCardDataError('Kart bilgisi için yolcu hesabınızla giriş yapın.');
+      return false;
+    }
+
+    setCardDataLoading(true);
+    setCardDataError('');
     try {
-      const token =
-        (typeof window !== 'undefined' &&
-          (localStorage.getItem('auth_token_yolcu') || localStorage.getItem('auth_token'))) ||
-        authToken;
-
-      const [cardData, ledgerData] = await Promise.allSettled([
-        api.getCard(cardId, token),
-        api.getLedger(cardId, token),
-      ]);
-
-      if (cardData.status === 'fulfilled' && cardData.value) {
-        const c = cardData.value;
-        const balKurus = c.balance_kurus !== undefined ? c.balance_kurus : (c.balance || 0);
-        setCard((prev) => ({
-          ...prev,
-          id: c.card_id || c.id || cardId,
-          balance_kurus: balKurus,
-          balance_tl: `${(balKurus / 100).toFixed(2)} ₺`,
-          card_type: c.card_type || prev?.card_type || 'tam',
-        }));
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('card_balance_kurus', balKurus.toString());
-        }
+      const identity = requestedCardID ? null : await api.getCurrentUser(tokenOverride);
+      const cardID = requestedCardID || identity?.card_id;
+      if (requestID !== cardRefreshRequestRef.current) return false;
+      if (!cardID) {
+        setCard(null);
+        setLedger([]);
+        setCardDataError('Hesabınıza bağlı kart bulunamadı.');
+        return false;
       }
 
-      if (ledgerData.status === 'fulfilled' && Array.isArray(ledgerData.value)) {
-        setLedger(ledgerData.value);
+      const snapshot = await api.getCardSnapshot(cardID, tokenOverride);
+      if (requestID !== cardRefreshRequestRef.current) return false;
+      if (snapshot.card_id !== cardID || !Number.isSafeInteger(Number(snapshot.balance_kurus)) || !Array.isArray(snapshot.ledger)) {
+        throw new Error('Kart ve defter yanıtı geçersiz.');
       }
+      setCard({
+        id: snapshot.card_id,
+        card_type: snapshot.card_type,
+        balance_kurus: Number(snapshot.balance_kurus),
+      });
+      setLedger(snapshot.ledger);
+      setCardDataError('');
+      return true;
     } catch (err) {
-      console.warn('Kart verileri senkronizasyon uyarısı:', err);
+      if (requestID === cardRefreshRequestRef.current) {
+        setCard(null);
+        setLedger([]);
+        setCardDataError(err.message || 'Kart ve hareket bilgileri alınamadı.');
+      }
+      return false;
+    } finally {
+      if (requestID === cardRefreshRequestRef.current) setCardDataLoading(false);
     }
   };
 
@@ -290,90 +332,75 @@ export default function App() {
   useEffect(() => {
     if (activeRole === 'heatmap') {
       fetchHeatmap();
+    } else if (activeRole === 'operasyon' || activeRole === 'map') {
+      fetchLiveBuses(selectedTransitLine);
     } else if (activeRole === 'hat_yoneticisi') {
       fetchLineFinancials();
     } else if (activeRole === 'muhasebe') {
       fetchSettlements();
-    } else if (activeRole === 'yolcu' || activeRole === 'home') {
-      refreshCardData(card?.id || 'CARD_YOLCU_001');
+    } else if (activeRole === 'yolcu' && authToken) {
+      refreshCardData(null, authToken);
     }
-  }, [activeRole]);
+  }, [activeRole, authToken, currentUser?.id, currentUser?.user_id]);
+
+  useEffect(() => {
+    if (!authToken || activeRole !== 'yolcu') return undefined;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refreshCardData(null, authToken);
+    };
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    window.addEventListener('focus', refreshWhenVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      window.removeEventListener('focus', refreshWhenVisible);
+    };
+  }, [activeRole, authToken]);
 
   // Recharge card action (Section 8.2)
   const handleRecharge = async (amountTL) => {
-    const kurus = amountTL * 100;
-
-    const token =
-      (typeof window !== 'undefined' &&
-        (localStorage.getItem('auth_token_yolcu') || localStorage.getItem('auth_token'))) ||
-      authToken;
+    const kurus = parseTLAmountToKurus(amountTL);
+    const token = getActiveToken();
+    if (!card?.id || !token) {
+      showToast('Dolum için giriş yapıp hesabınıza bağlı kartı yükleyin.', 'error');
+      return;
+    }
+    if (kurus === null) {
+      showToast('Dolum tutarı en fazla iki ondalık basamak içermelidir.', 'error');
+      return;
+    }
 
     setRechargeLoading(true);
     try {
-      const headers = {
-        'Content-Type': 'application/json',
-        'Idempotency-Key': `REC_${Date.now()}`,
-      };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch(`/api/v1/cards/${card.id}/recharge`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          amount_kurus: kurus,
-          description: `${amountTL} TL Kiosk Dolumu`,
-        }),
-      });
-
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        const newBal =
-          data && data.balance_after_kurus !== undefined
-            ? data.balance_after_kurus
-            : data && data.balance_kurus !== undefined
-            ? data.balance_kurus
-            : card.balance_kurus + kurus;
-        setCard((prev) => ({
-          ...prev,
-          balance_kurus: newBal,
-          balance_tl: `${(newBal / 100).toFixed(2)} ₺`,
-        }));
-        localStorage.setItem('card_balance_kurus', newBal.toString());
-        setLedger((prev) => [
-          {
-            id: Date.now().toString(),
-            entry_type: 'dolum',
-            amount_kurus: kurus,
-            balance_after_kurus: newBal,
-            description: `${amountTL} TL Kiosk Dolumu`,
-            created_at: new Date().toISOString(),
-          },
-          ...prev,
-        ]);
-        showToast(`${amountTL} TL başarıyla yüklendi!`, 'success');
-        refreshCardData(card.id);
-      } else if (res.status === 401) {
-        showToast('Bakiye yüklemek için oturum açmanız gerekmektedir. Lütfen giriş yapınız.', 'error');
+      await api.rechargeCard(card.id, kurus, `${amountTL} TL kiosk dolumu`, token, `REC_${crypto.randomUUID()}`);
+      if (await refreshCardData(card.id, token)) {
+        showToast(`${amountTL} TL yüklendi; bakiye ve hareketler sunucudan yenilendi.`, 'success');
       } else {
-        showToast(`Yükleme başarısız oldu (Hata: ${res.status}): İşlem tamamlanamadı.`, 'error');
+        showToast('Dolum kaydedildi ancak güncel bakiye ve hareketler alınamadı.', 'warning');
       }
-    } catch {
-      showToast('Bağlantı hatası: Sunucuya ulaşılamadı veya dolum işlemi başarısız oldu.', 'error');
+    } catch (err) {
+      showToast(`Dolum tamamlanamadı: ${err.message || 'Sunucuya ulaşılamadı.'}`, 'error');
     } finally {
       setRechargeLoading(false);
     }
   };
 
   // Turnstile tap action (Gerçek API Yanıtı — Sahte Başarı Bildirimi Yok)
-  const handleTapTurnstile = async (lineId = 'LINE_500T', lineName = '500T') => {
-    const cardId = card?.id || 'CARD_YOLCU_001';
+  const handleTapTurnstile = async (lineId = 'LINE_5', lineName = '5') => {
+    if (tapLoading) return;
+    setTapLoading(true);
+    const cardId = card?.id;
+    if (!cardId) {
+      setTapLoading(false);
+      showToast('Biniş için giriş yapıp hesabınıza bağlı kartı yükleyin.', 'error');
+      return;
+    }
 
     const VALIDATOR_LINE_MAP = {
-      LINE_500T: { valId: 'VAL_500T_01', statId: 'STAT_AYRILIK' },
-      LINE_14ES: { valId: 'VAL_14ES_01', statId: 'STAT_KADIKOY' },
-      LINE_T1: { valId: 'VAL_T1_01', statId: 'STAT_KABATAS' },
-      LINE_VAPUR_KE: { valId: 'VAL_VAPUR_01', statId: 'STAT_KADIKOY' },
-      default: { valId: 'VAL_500T_01', statId: 'STAT_AYRILIK' },
+      LINE_5: { valId: 'VAL_500T_01', statId: 'STAT_ESHOT_10177' },
+      LINE_10: { valId: 'VAL_14ES_01', statId: 'STAT_ESHOT_10145' },
+      LINE_15: { valId: 'VAL_T1_01', statId: 'STAT_ESHOT_10008' },
+      LINE_16: { valId: 'VAL_VAPUR_01', statId: 'STAT_ESHOT_10255' },
+      default: { valId: 'VAL_500T_01', statId: 'STAT_ESHOT_10177' },
     };
 
     const targetVal = VALIDATOR_LINE_MAP[lineId] || VALIDATOR_LINE_MAP.default;
@@ -409,7 +436,12 @@ export default function App() {
         if (ev && ev.status === 'REJECTED') {
           showToast(`Turnike geçiş reddedildi: ${ev.rejection_reason || 'Kart kabul edilmedi.'}`, 'error');
         } else {
-          const fareCharged = ev?.fare_charged_kurus ?? 2000;
+          const fareCharged = Number(ev?.fare_charged_kurus);
+          if (!Number.isSafeInteger(fareCharged)) {
+            showToast('Biniş yanıtında ücret bilgisi bulunamadı; hareketler yenilendi.', 'warning');
+            await refreshCardData(cardId, getActiveToken());
+            return;
+          }
           const fareTL = (fareCharged / 100).toFixed(2);
 
           // Kesin Kural: En fazla 2 aktarma yapılabilir (3. veya 4. aktarma kesinlikle yok)
@@ -434,33 +466,50 @@ export default function App() {
         }
 
         // Bakiye ve defteri API'den anında senkronize et
-        await refreshCardData(cardId);
+        await refreshCardData(cardId, getActiveToken());
       } else {
         const errData = await res.json().catch(() => ({}));
-        const msg = errData?.error?.message || errData?.message || `Cihaz doğrulaması başarısız oldu (${res.status}).`;
+        let msg = errData?.error?.message || errData?.message;
+        if (!msg) {
+          switch (res.status) {
+            case 400: msg = 'Geçersiz biniş parametreleri veya veri formatı.'; break;
+            case 401: msg = 'Turnike cihaz kimlik doğrulaması başarısız.'; break;
+            case 403: msg = 'Validatör cihazı devre dışı veya yetkisiz hat/durak.'; break;
+            case 409: msg = 'Mükerrer biniş engellendi (Replay / Sıra koruması).'; break;
+            case 422: msg = 'Doğrulama hatası: Geçersiz kart veya tarife.'; break;
+            case 429: msg = 'Çok fazla istek yapıldı, lütfen biraz bekleyiniz.'; break;
+            case 500: msg = 'Turnike sistemi sunucu hatası.'; break;
+            default: msg = `Turnike işlemi tamamlanamadı (${res.status}).`;
+          }
+        }
         showToast(`Turnike geçiş reddedildi (${res.status}): ${msg}`, 'error');
       }
     } catch (err) {
       console.error('Turnike tap hatası:', err);
-      showToast('Turnike bağlantı hatası: Sunucuya ulaşılamadı.', 'error');
+      showToast('Turnike bağlantı hatası: Sunucuya ulaşılamadı. Lütfen ağ bağlantınızı kontrol ediniz.', 'error');
+    } finally {
+      setTapLoading(false);
     }
   };
 
   // Inspector: Query Card Action (Section 9.2)
   const handleQueryCard = async (cardId) => {
+    const requestID = ++queryCardRequestRef.current;
     setQueryCardLoading(true);
     setQueryCardError(null);
     try {
       const token = getActiveToken();
       const res = await api.getCard(cardId, token);
+      if (requestID !== queryCardRequestRef.current) return;
       setQueriedCard(res);
       showToast(`Kart başarıyla doğrulandı: ${cardId}`, 'success');
     } catch (err) {
+      if (requestID !== queryCardRequestRef.current) return;
       setQueryCardError(err.message || 'Kart bulunamadı veya sorgulama başarısız.');
       setQueriedCard(null);
       showToast('Kart sorgulama başarısız.', 'error');
     } finally {
-      setQueryCardLoading(false);
+      if (requestID === queryCardRequestRef.current) setQueryCardLoading(false);
     }
   };
 
@@ -627,25 +676,27 @@ export default function App() {
     }
   };
 
-  // Multi-role switch handler (Section 4.3)
-  const handleSwitchUserRole = async (targetRole) => {
+  const handleAddSubsidyAdjustment = async (adjustment, idempotencyKey) => {
+    setAddingSubsidyAdjustment(true);
     try {
-      const data = await api.switchRole(targetRole, authToken);
-      if (data && data.access_token) {
-        setAuthToken(data.access_token);
-        setCurrentUser(data.user);
-        localStorage.setItem('auth_token', data.access_token);
-        localStorage.setItem('auth_user', JSON.stringify(data.user));
-        setActiveRole(targetRole);
-        showToast(`${targetRole.toUpperCase()} rolüne geçiş yapıldı.`, 'success');
-      }
+      await api.addSettlementSubsidy(adjustment, getActiveToken(), idempotencyKey);
+      showToast('Settlement destek adjustment kaydedildi.', 'success');
+      await fetchSettlements();
+      return true;
     } catch (err) {
-      showToast(`Rol geçişi başarısız: ${err.message}`, 'error');
+      showToast(`Destek adjustment kaydedilemedi: ${err.message}`, 'error');
+      return false;
+    } finally {
+      setAddingSubsidyAdjustment(false);
     }
   };
 
   // Login handler
   const handleLoginSuccess = (token, user) => {
+    cardRefreshRequestRef.current += 1;
+    setCard(null);
+    setLedger([]);
+    setCardDataError('');
     setAuthToken(token);
     setCurrentUser(user);
     if (typeof window !== 'undefined') {
@@ -682,12 +733,15 @@ export default function App() {
 
   // Logout handler
   const handleLogout = () => {
+    cardRefreshRequestRef.current += 1;
+    setCard(null);
+    setLedger([]);
+    setCardDataError('');
     setAuthToken('');
     setCurrentUser(null);
     if (typeof window !== 'undefined') {
       localStorage.removeItem('auth_token');
       localStorage.removeItem('auth_user');
-      localStorage.removeItem('auth_token_yolcu');
       localStorage.removeItem('auth_token_kontrolor');
       localStorage.removeItem('auth_token_hat_yoneticisi');
       localStorage.removeItem('auth_token_muhasebe');
@@ -723,7 +777,6 @@ export default function App() {
         onRoleSelect={handleProtectedRoleSelect}
         theme={theme}
         onToggleTheme={toggleTheme}
-        onSwitchUserRole={handleSwitchUserRole}
       />
 
       {/* Main View Portals */}
@@ -740,6 +793,7 @@ export default function App() {
                 onRecharge={handleRecharge}
                 onTapTurnstile={handleTapTurnstile}
                 rechargeLoading={rechargeLoading}
+                tapLoading={tapLoading}
                 heatmapError={heatmapError}
                 onFetchHeatmap={fetchHeatmap}
               />
@@ -755,6 +809,9 @@ export default function App() {
                 onRecharge={handleRecharge}
                 onTapTurnstile={handleTapTurnstile}
                 rechargeLoading={rechargeLoading}
+                tapLoading={tapLoading}
+                cardDataLoading={cardDataLoading}
+                cardDataError={cardDataError}
                 onShowToast={showToast}
               />
             )}
@@ -795,6 +852,8 @@ export default function App() {
                 onClosePeriod={handleCloseSettlement}
                 onReopenPeriod={handleReopenPeriod}
                 onStorno={handleStorno}
+                onAddSubsidy={handleAddSubsidyAdjustment}
+                addingSubsidy={addingSubsidyAdjustment}
                 closingPeriod={closingPeriod}
                 settlementData={settlementData}
                 loading={loadingSettlements}
@@ -814,10 +873,9 @@ export default function App() {
                   fetchLiveBuses(line);
                 }}
                 liveTransitLoading={liveTransitLoading}
+                liveTransitError={liveTransitError}
+                onRefreshTransit={() => fetchLiveBuses(selectedTransitLine)}
                 liveTransitMeta={liveTransitMeta}
-                heatmapData={heatmapData}
-                heatmapError={heatmapError}
-                onFetchHeatmap={fetchHeatmap}
               />
             )}
 
@@ -831,10 +889,9 @@ export default function App() {
                   fetchLiveBuses(line);
                 }}
                 liveTransitLoading={liveTransitLoading}
+                liveTransitError={liveTransitError}
+                onRefreshTransit={() => fetchLiveBuses(selectedTransitLine)}
                 liveTransitMeta={liveTransitMeta}
-                heatmapData={heatmapData}
-                heatmapError={heatmapError}
-                onFetchHeatmap={fetchHeatmap}
               />
             )}
 
@@ -847,7 +904,7 @@ export default function App() {
                     <p className="portal-subtitle">İzmir geneli saatlik yolcu biniş yoğunluğu ve kalabalık dağılımı</p>
                   </div>
                   <div className="portal-actions">
-                    <Button variant="secondary" onClick={fetchHeatmap}>
+                    <Button variant="secondary" onClick={fetchHeatmap} loading={heatmapLoading} disabled={heatmapLoading}>
                       Isı Haritasını Yenile
                     </Button>
                   </div>
@@ -877,9 +934,14 @@ export default function App() {
                       ))}
                     </div>
                   ) : (
-                    <div className="text-center py-8 text-muted">
-                      <p className="text-sm">Yoğunluk verisi yükleniyor...</p>
+                    <div className="text-center py-8 text-muted" role={heatmapLoading ? 'status' : undefined}>
+                      <p className="text-sm">{heatmapLoading ? 'Yoğunluk verisi yükleniyor...' : 'Bu dönem için yoğunluk kaydı bulunmuyor.'}</p>
                     </div>
+                  )}
+                  {heatmapUpdatedAt && !heatmapError && (
+                    <p className="mt-4 text-xs text-muted" role="status">
+                      Son güncelleme: {formatDateTime(heatmapUpdatedAt)}
+                    </p>
                   )}
                 </Card>
               </div>

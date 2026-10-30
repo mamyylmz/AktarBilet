@@ -40,7 +40,7 @@ test.describe('go-live negative security controls', () => {
       headers: { 'Idempotency-Key': key },
       data: {
         validator_id: validator, sequence_no: Number(suffix.slice(-12)), card_id: card,
-        line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
+        line_id: 'LINE_5', station_id: 'STAT_ESHOT_10177', direction: 1,
         tapped_at: new Date().toISOString()
       }
     });
@@ -59,7 +59,7 @@ test.describe('go-live negative security controls', () => {
       headers: { 'Idempotency-Key': `SEC-NO-DEVICE-CREDENTIAL-${suffix}` },
       data: {
         validator_id: 'VAL_500T_01', sequence_no: Number(suffix.slice(-12)), card_id: card,
-        line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
+        line_id: 'LINE_5', station_id: 'STAT_ESHOT_10177', direction: 1,
         tapped_at: new Date().toISOString()
       }
     });

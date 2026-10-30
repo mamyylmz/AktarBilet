@@ -44,7 +44,7 @@ test.describe('Codex independent security retest', () => {
       headers: { 'Idempotency-Key': key },
       data: {
         validator_id: 'VAL_500T_01', sequence_no: suffix, card_id: cardID,
-        line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
+        line_id: 'LINE_5', station_id: 'STAT_ESHOT_10177', direction: 1,
         tapped_at: new Date().toISOString()
       }
     });
@@ -63,7 +63,7 @@ test.describe('Codex independent security retest', () => {
       headers: { 'X-Validator-ID': 'VAL_500T_01' },
       data: [{
         idempotency_key: key, validator_id: 'VAL_500T_01', sequence_no: suffix,
-        card_id: cardID, line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
+        card_id: cardID, line_id: 'LINE_5', station_id: 'STAT_ESHOT_10177', direction: 1,
         tapped_at: new Date().toISOString()
       }]
     });
@@ -83,7 +83,7 @@ test.describe('Codex independent security retest', () => {
       headers: { ...bearer(token), 'Idempotency-Key': key },
       data: {
         validator_id: 'VAL_500T_01', sequence_no: suffix, card_id: cardID,
-        line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
+        line_id: 'LINE_5', station_id: 'STAT_ESHOT_10177', direction: 1,
         tapped_at: new Date().toISOString()
       }
     });
@@ -134,7 +134,7 @@ test.describe('Codex independent security retest', () => {
     createFundedCard(cardID);
     const rawBody = JSON.stringify({
       validator_id: validatorID, sequence_no: sequence, card_id: cardID,
-      line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
+      line_id: 'LINE_5', station_id: 'STAT_ESHOT_10177', direction: 1,
       tapped_at: new Date().toISOString()
     });
 
@@ -162,7 +162,7 @@ test.describe('Codex independent security retest', () => {
     createFundedCard(cardID);
     const rawBody = JSON.stringify([{
       idempotency_key: key, validator_id: eventValidator, sequence_no: sequence,
-      card_id: cardID, line_id: 'LINE_14ES', station_id: 'STAT_KADIKOY', direction: 1,
+      card_id: cardID, line_id: 'LINE_10', station_id: 'STAT_ESHOT_10145', direction: 1,
       tapped_at: new Date().toISOString()
     }]);
 

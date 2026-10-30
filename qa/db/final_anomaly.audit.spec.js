@@ -6,7 +6,7 @@ test('T5 impossible-travel anomaly is durably linked to its validator event', as
   const suffix = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
   const card = `QA_ANOM_${suffix}`;
   const firstTime = new Date(Date.now() - 120_000);
-  const secondTime = new Date(firstTime.getTime() + 60_000);
+  const secondTime = new Date(firstTime.getTime() + 1_000);
   sql(`INSERT INTO jw_cards(id,card_type,balance_kurus) VALUES ('${card}','tam',10000);
        INSERT INTO jw_ledger(card_id,entry_type,amount_kurus,balance_after_kurus,reference_id,description)
        VALUES ('${card}','dolum',10000,10000,'SEED-${card}','final anomaly audit seed')`);
@@ -25,8 +25,8 @@ test('T5 impossible-travel anomaly is durably linked to its validator event', as
     });
   };
 
-  expect((await sendTap('VAL_T1_01', 'LINE_T1', 'STAT_KABATAS', firstTime, 1)).status()).toBe(200);
-  const second = await sendTap('VAL_14ES_01', 'LINE_14ES', 'STAT_KADIKOY', secondTime, 2);
+  expect((await sendTap('VAL_T1_01', 'LINE_15', 'STAT_ESHOT_10008', firstTime, 1)).status()).toBe(200);
+  const second = await sendTap('VAL_14ES_01', 'LINE_10', 'STAT_ESHOT_10145', secondTime, 2);
   expect(second.status()).toBe(200);
   const body = await second.json();
   expect(body.anomaly.IsAnomaly).toBe(true);

@@ -57,3 +57,27 @@ AktarBilet (Şehir İçi Toplu Taşıma Bilet ve Ücretlendirme Sistemi) projesi
 - Testleri geçirmek amacıyla assertion'ları zayıflatmak veya mock'larla gerçek kontrolleri atlamak yasaktır.
 - Para hesaplamalarında float türü kullanmak yasaktır.
 - `proje.md` içindeki canarileri ihlal etmek yasaktır.
+
+---
+
+## 5. Beceriler ve Etkinleştirme Politikası (Skills & Activation Policy)
+
+Sistem becerileri `.agents/skills/` altında modüler olarak tanımlanmıştır. Beceriler her istekte otomatik yüklenmez; progressive disclosure (ihtiyaç anında aşamalı yükleme) ilkesiyle yalnızca ilgili bağlamda devreye girer.
+
+### 5.1. Beceri Sahipliği ve Görev Ayrımı (Separation of Concerns)
+
+| Beceri (Skill) | Birincil Sorumlu | İkincil / Destekçi | Kapsam ve Görev |
+| :--- | :--- | :--- | :--- |
+| **`spec-compliance`** | Codex CLI | Antigravity | Şartname (`proje.md`) ile kod arasındaki 171 kriterlik izlenebilirlik denetimi. |
+| **`financial-invariants`** | Codex CLI (Test) | Antigravity (Fix) | Kuruş tam sayı, bakiye defteri, 2 aktarma tavanı ve gelir paylaşım doğrulaması. |
+| **`offline-recovery`** | Codex CLI (Test) | Antigravity (Fix) | HMAC-SHA256 validatör senkronizasyonu, kuyruk kalıcılığı ve replay koruması. |
+| **`security-gate`** | Codex CLI (Audit) | Antigravity (Fix) | OWASP ASVS 5.0.0 gereksinimleri, RBAC, IDOR ve `govulncheck` denetimi. |
+| **`safe-refactoring`** | Antigravity | Codex CLI (Review) | "Delete only when proven unused" kuralıyla ölü kod ve kalıntı temizliği. |
+| **`accessibility-audit`** | Codex CLI | Antigravity | WCAG 2.2 AA, klavye gezintisi, kontrast ve mobil reflow kontrolleri. |
+| **`performance-evidence`** | Codex CLI (Test) | Antigravity (Opt) | k6 yük testleri, `EXPLAIN ANALYZE`, p95/p99 ve T-5 1M olay/saat kapasite kanıtı. |
+| **`technical-reviewer`** | Tech Reviewer | Antigravity/Codex | `.agents/prompts/technical-reviewer.md` üzerinden salt-okunur komite savunma simülasyonu. |
+
+### 5.2. Çalışma İlkeleri ve Devir (Handoff)
+1. **Yetki Devredilemez:** Bir becerinin kullanılması başka bir ajanın yetki sınırını ihlal etmez. Codex üretim kodunu düzenleyemez; Antigravity bağımsız test sonuçlarını kendi lehine değiştiremez.
+2. **Kanıt Zorunluluğu:** Hiçbir beceri somut terminal komut çıktısı veya test kütüğü olmaksızın `PASS` veremez.
+3. **Sıralı İş Akışı (Handoff):** Codex bulguyu raporlar (`FAIL`) $\rightarrow$ Antigravity kök nedeni giderir (`FIX`) $\rightarrow$ Codex bağımsız testi yeniden çalıştırarak onaylar (`PASS`).

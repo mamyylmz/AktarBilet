@@ -13,7 +13,7 @@ export function LineManagerPortal({
   simulating = false,
   approving = false,
 }) {
-  const [selectedLine, setSelectedLine] = useState('LINE_500T');
+  const [selectedLine, setSelectedLine] = useState('');
   const [currentHeadway, setCurrentHeadway] = useState('15');
   const [targetHeadway, setTargetHeadway] = useState('10');
   const [fleetCapacity, setFleetCapacity] = useState('100');
@@ -130,16 +130,13 @@ export function LineManagerPortal({
               </label>
               <select
                 id="sim-line-select"
-                value={selectedLine}
+                value={selectedLine || lineFinancials[0]?.line_id || ''}
                 onChange={(e) => setSelectedLine(e.target.value)}
                 className="input w-full"
               >
-                <option value="LINE_500T">500T - Tuzla - Cevizlibağ (Ekspres)</option>
-                <option value="LINE_14ES">14ES - Esenkent - Kadıköy</option>
-                <option value="LINE_T1">T1 - Kabataş - Bağcılar Tramvay</option>
-                <option value="LINE_800">800 - Menemen - Otogar (ESHOT)</option>
-                <option value="LINE_470">470 - Şirinyer - Tınaztepe (ESHOT)</option>
-                <option value="LINE_35">35 - Fahrettin Altay - Konak (ESHOT)</option>
+                {lineFinancials.map((line) => (
+                  <option key={line.line_id} value={line.line_id}>{line.line_name || line.line_id}</option>
+                ))}
               </select>
             </div>
 

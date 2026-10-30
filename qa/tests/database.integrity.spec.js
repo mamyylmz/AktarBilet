@@ -36,9 +36,9 @@ test.describe('PostgreSQL schema and financial invariants', () => {
   });
 
   test('currency and percentage constraints reject invalid values', () => {
-    expect(() => sql("BEGIN; UPDATE jw_tariffs SET base_fare_kurus=-1 WHERE id='TARIFF_ISTANBUL_STD'; ROLLBACK"))
+    expect(() => sql("BEGIN; UPDATE jw_tariffs SET base_fare_kurus=-1 WHERE id='TARIFF_IZMIR_STD'; ROLLBACK"))
       .toThrow();
-    expect(() => sql("BEGIN; UPDATE jw_tariffs SET transfer1_discount_pct=101 WHERE id='TARIFF_ISTANBUL_STD'; ROLLBACK"))
+    expect(() => sql("BEGIN; UPDATE jw_tariffs SET transfer1_discount_pct=101 WHERE id='TARIFF_IZMIR_STD'; ROLLBACK"))
       .toThrow();
   });
 

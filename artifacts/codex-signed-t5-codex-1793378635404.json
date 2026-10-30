@@ -1,0 +1,44 @@
+{
+  "runID": "codex-1793378635404",
+  "apiURL": "http://127.0.0.1:18082",
+  "validatorID": "VAL_500T_01",
+  "durationSeconds": 60,
+  "elapsedSeconds": 60.064,
+  "launchRateBatchesPerSecond": 15,
+  "batchSize": 20,
+  "concurrency": 10,
+  "generatedEvents": 18000,
+  "sentEvents": 18000,
+  "apiAcceptedEvents": 18000,
+  "persistedEvents": 18000,
+  "processedEvents": 18000,
+  "rejectedEvents": 0,
+  "pendingEvents": 0,
+  "ledgerDebitRows": 18000,
+  "persistedFareKurus": 36000000,
+  "failureBatches": 0,
+  "errors": [],
+  "errorRate": 0,
+  "eventsPerSecond": 299.68,
+  "hourlyEquivalent": 1078848,
+  "batchLatencyMs": {
+    "p50": 161.73,
+    "p95": 273.62,
+    "p99": 342.99
+  },
+  "summaryBefore": {
+    "totalTrips": 16609,
+    "totalRevenueKurus": 33211247,
+    "totalNetKurus": 33211247
+  },
+  "summaryAfter": {
+    "totalTrips": 34609,
+    "totalRevenueKurus": 69211247,
+    "totalNetKurus": 69211247
+  },
+  "expectedRevenueDeltaKurus": 36000000,
+  "reportDeltaKurus": 36000000,
+  "reportAccurate": true,
+  "persistenceReconciles": true,
+  "capacityVerdict": "T5_CAPACITY_VERIFIED"
+}

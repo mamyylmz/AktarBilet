@@ -41,6 +41,11 @@ func TestSeed_LinesCardinality(t *testing.T) {
 	if len(lines) < 40 {
 		t.Fatalf("En az 40 hat tanımlı olmalı, bulunan: %d", len(lines))
 	}
+	busCount, tramCount, ferryCount := 0, 0, 0
+	legacy := make(map[string]bool)
+	for _, id := range LegacyIstanbulSeedLineIDs() {
+		legacy[id] = true
+	}
 
 	// Hat modları ve id uniqueness kontrolü
 	seen := make(map[string]bool)
@@ -53,6 +58,20 @@ func TestSeed_LinesCardinality(t *testing.T) {
 		if l.Mode != domain.ModeBus && l.Mode != domain.ModeTram && l.Mode != domain.ModeFerry {
 			t.Fatalf("Geçersiz hat modu: %s", l.Mode)
 		}
+		if l.IsActive && legacy[l.ID] {
+			t.Fatalf("Aktif İzmir hattı eski İstanbul hattı kimliğiyle çakışıyor: %s", l.ID)
+		}
+		switch l.Mode {
+		case domain.ModeBus:
+			busCount++
+		case domain.ModeTram:
+			tramCount++
+		case domain.ModeFerry:
+			ferryCount++
+		}
+	}
+	if busCount != 446 || tramCount != 3 || ferryCount != 1 {
+		t.Fatalf("Resmî snapshot ve eklenen İzmir modları beklenmiyordu: bus=%d tram=%d ferry=%d", busCount, tramCount, ferryCount)
 	}
 }
 
@@ -68,6 +87,9 @@ func TestSeed_StationsAndTariff(t *testing.T) {
 	}
 
 	tariff := DefaultSeedTariff()
+	if tariff.Name != "AktarBilet Simülasyon Tarifesi" {
+		t.Fatalf("Seed tarife resmi tarife gibi adlandırılmamalı, bulunan: %q", tariff.Name)
+	}
 	if tariff.BaseFareKurus != 2000 {
 		t.Fatalf("Standart tam bilet 20.00 TL (2000 kuruş) olmalı, bulunan: %d", tariff.BaseFareKurus)
 	}
@@ -98,6 +120,51 @@ func TestSeed_ValidatorsAndCards(t *testing.T) {
 	}
 	if !foundTam {
 		t.Fatal("CARD_TAM_001 demo kartı bulunamadı")
+	}
+}
+
+func TestSeed_DemoPassengerAccountsAndCards(t *testing.T) {
+	users := DefaultSeedUsers()
+	userIDs := make(map[string]uuid.UUID)
+	for _, user := range users {
+		if user.Role == domain.RoleYolcu {
+			userIDs[user.Email] = uuid.New()
+		}
+	}
+	want := map[string]struct {
+		cardID string
+		typeID domain.CardType
+	}{
+		"yolcu@aktarbilet.gov.tr":         {"CARD_YOLCU_001", domain.CardTypeTam},
+		"ogrenci.demo@aktarbilet.gov.tr":  {"CARD_DEMO_OGRENCI_001", domain.CardTypeOgrenci},
+		"yasli.demo@aktarbilet.gov.tr":    {"CARD_DEMO_YASLI_001", domain.CardTypeYasli},
+		"ucretsiz.demo@aktarbilet.gov.tr": {"CARD_DEMO_UCRETSIZ_001", domain.CardTypeUcretsiz},
+	}
+	if len(userIDs) != len(want) {
+		t.Fatalf("Dört yolcu demo hesabı bekleniyordu, bulunan: %d", len(userIDs))
+	}
+	for email := range want {
+		if _, ok := userIDs[email]; !ok {
+			t.Fatalf("Demo yolcu hesabı seed edilmemiş: %s", email)
+		}
+	}
+	cards := DefaultDemoCardsForUsers(userIDs)
+	owned := make(map[uuid.UUID]int)
+	for _, card := range cards {
+		if card.UserID != nil {
+			owned[*card.UserID]++
+		}
+	}
+	for email, expected := range want {
+		found := 0
+		for _, card := range cards {
+			if card.ID == expected.cardID && card.CardType == expected.typeID && card.UserID != nil && *card.UserID == userIDs[email] {
+				found++
+			}
+		}
+		if found != 1 || owned[userIDs[email]] != 1 {
+			t.Errorf("%s hesabının %s türünde tek bağlı kartı olmalı (eşleşme=%d, toplam bağlı=%d)", email, expected.typeID, found, owned[userIDs[email]])
+		}
 	}
 }
 

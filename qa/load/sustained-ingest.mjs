@@ -28,8 +28,8 @@ function makeBatch(startIndex) {
       validator_id: 'VAL_500T_01',
       sequence_no: sequenceBase + index,
       card_id: `CARD_SIM_${String((index % 200000) + 1).padStart(6, '0')}`,
-      line_id: 'LINE_500T',
-      station_id: 'STAT_AYRILIK',
+      line_id: 'LINE_5',
+      station_id: 'STAT_ESHOT_10177',
       direction: 1,
       tapped_at: now,
     };

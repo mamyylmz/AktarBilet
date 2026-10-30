@@ -1,14 +1,5 @@
 import React, { useState } from 'react';
 
-const ROLE_LABELS = {
-  admin: 'Admin',
-  hat_yoneticisi: 'Hat Yöneticisi',
-  kontrolor: 'Kontrolör',
-  muhasebe: 'Muhasebe',
-  operasyon: 'Operasyon',
-  yolcu: 'Yolcu',
-};
-
 export function Navbar({
   currentUser,
   onOpenLogin,
@@ -21,10 +12,8 @@ export function Navbar({
   onRoleSelect,
   theme = 'light',
   onToggleTheme,
-  onSwitchUserRole,
 }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const isMultiRole = currentUser && Array.isArray(currentUser.roles) && currentUser.roles.length > 1;
 
   const handleNavClick = (callback) => {
     setMobileMenuOpen(false);
@@ -47,7 +36,6 @@ export function Navbar({
               <span className="brand-icon" aria-hidden="true">🎫</span>
               <span className="brand-name">AktarBilet</span>
             </button>
-            <span className="brand-badge hidden sm:inline-block">Kurumsal Ulaşım Portalı</span>
           </div>
 
           {/* Masaüstü Navigasyon */}
@@ -93,7 +81,7 @@ export function Navbar({
                 className={`nav-link ${activeRole === 'muhasebe' ? 'active' : ''}`}
                 aria-current={activeRole === 'muhasebe' ? 'page' : undefined}
               >
-                📊 Muhasebe Portalı
+                Muhasebe Portalı
               </button>
             )}
             {currentUser && currentUser.role === 'hat_yoneticisi' && (
@@ -103,7 +91,7 @@ export function Navbar({
                 className={`nav-link ${activeRole === 'hat_yoneticisi' ? 'active' : ''}`}
                 aria-current={activeRole === 'hat_yoneticisi' ? 'page' : undefined}
               >
-                🚌 Hat Yönetimi
+                Hat Yönetimi
               </button>
             )}
             {currentUser && currentUser.role === 'kontrolor' && (
@@ -113,7 +101,7 @@ export function Navbar({
                 className={`nav-link ${activeRole === 'kontrolor' ? 'active' : ''}`}
                 aria-current={activeRole === 'kontrolor' ? 'page' : undefined}
               >
-                👮 Kontrolör Portalı
+                Kontrolör Portalı
               </button>
             )}
             {currentUser && currentUser.role === 'operasyon' && (
@@ -123,29 +111,18 @@ export function Navbar({
                 className={`nav-link ${activeRole === 'operasyon' ? 'active' : ''}`}
                 aria-current={activeRole === 'operasyon' ? 'page' : undefined}
               >
-                📡 Operasyon Portalı
+                Operasyon Portalı
               </button>
             )}
             {currentUser && currentUser.role === 'admin' && (
-              <>
-                <button
+              <button
                   type="button"
                   onClick={() => handleNavClick(() => onRoleSelect('admin'))}
                   className={`nav-link ${activeRole === 'admin' ? 'active' : ''}`}
                   aria-current={activeRole === 'admin' ? 'page' : undefined}
                 >
-                  ⚙️ Sistem Yönetimi
+                  Sistem Yönetimi
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleNavClick(() => onRoleSelect('muhasebe'))}
-                  className={`nav-link ${activeRole === 'muhasebe' ? 'active' : ''}`}
-                  aria-current={activeRole === 'muhasebe' ? 'page' : undefined}
-                  title="Muhasebe ve Mutabakat Denetimi"
-                >
-                  📊 Muhasebe Denetimi
-                </button>
-              </>
             )}
           </nav>
         </div>
@@ -167,34 +144,6 @@ export function Navbar({
           {/* Giriş Durumuna Göre Kontroller */}
           {currentUser ? (
             <div className="user-profile-menu flex items-center gap-2">
-              {/* Çoklu Rol Seçici */}
-              {isMultiRole && (
-                <div
-                  className="multi-role-selector"
-                  role="group"
-                  aria-label="Yönetici Rol Değiştirici"
-                >
-                  {currentUser.roles.map((r) => {
-                    const isActive = currentUser.role === r;
-                    const label = ROLE_LABELS[r] || r;
-                    return (
-                      <button
-                        key={r}
-                        type="button"
-                        data-role={r}
-                        onClick={() => onSwitchUserRole(r)}
-                        className={`role-switch-btn ${isActive ? 'active' : ''}`}
-                        aria-pressed={isActive}
-                        aria-label={`${label} rolüne geç`}
-                        title={`${label} rolüne geç`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
               {/* Kullanıcı Adı ve Rol Bilgisi */}
               <div className="user-info text-right hidden sm:block">
                 <p className="user-name font-semibold text-xs leading-tight text-foreground">
@@ -309,26 +258,17 @@ export function Navbar({
                 onClick={() => handleNavClick(() => onRoleSelect('muhasebe'))}
                 className={`btn btn-sm text-left justify-start w-full col-span-2 ${activeRole === 'muhasebe' ? 'btn-primary' : 'btn-outline'}`}
               >
-                📊 Muhasebe Portalı
+                Muhasebe Portalı
               </button>
             )}
             {currentUser && currentUser.role === 'admin' && (
-              <>
-                <button
+              <button
                   type="button"
                   onClick={() => handleNavClick(() => onRoleSelect('admin'))}
                   className={`btn btn-sm text-left justify-start w-full ${activeRole === 'admin' ? 'btn-primary' : 'btn-outline'}`}
                 >
                   ⚙️ Sistem Yönetimi
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleNavClick(() => onRoleSelect('muhasebe'))}
-                  className={`btn btn-sm text-left justify-start w-full ${activeRole === 'muhasebe' ? 'btn-primary' : 'btn-outline'}`}
-                >
-                  📊 Muhasebe Denetimi
-                </button>
-              </>
             )}
           </div>
         </div>

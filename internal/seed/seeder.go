@@ -2,8 +2,14 @@ package seed
 
 import (
 	"context"
+	"embed"
+	"encoding/csv"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -12,6 +18,12 @@ import (
 	"github.com/mamyylmz/AktarBilet/internal/auth"
 	"github.com/mamyylmz/AktarBilet/internal/domain"
 )
+
+// ESHOT route and stop records are embedded snapshots of the official İzmir
+// Metropolitan Municipality open-data resources (CC BY 4.0).
+//
+//go:embed data/eshot-otobus-hatlari.csv data/eshot-otobus-duraklari.csv
+var officialTransitData embed.FS
 
 type DBExecutor interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
@@ -36,7 +48,25 @@ func DefaultSeedUsers() []SeedUser {
 		{
 			Email:    "yolcu@aktarbilet.gov.tr",
 			Password: "YolcuPassword123!",
-			FullName: "Mehmet Demir (Örnek Yolcu)",
+			FullName: "Mert Yılmaz (Demo Tam Kart)",
+			Role:     domain.RoleYolcu,
+		},
+		{
+			Email:    "ogrenci.demo@aktarbilet.gov.tr",
+			Password: "OgrenciDemo2026!",
+			FullName: "Ece Kaya (Demo Öğrenci Kartı)",
+			Role:     domain.RoleYolcu,
+		},
+		{
+			Email:    "yasli.demo@aktarbilet.gov.tr",
+			Password: "YasliDemo2026!",
+			FullName: "Ayşe Yıldız (Demo Yaşlı Kartı)",
+			Role:     domain.RoleYolcu,
+		},
+		{
+			Email:    "ucretsiz.demo@aktarbilet.gov.tr",
+			Password: "UcretsizDemo2026!",
+			FullName: "Deniz Aras (Demo Ücretsiz Kart)",
 			Role:     domain.RoleYolcu,
 		},
 		{
@@ -67,71 +97,93 @@ func DefaultSeedUsers() []SeedUser {
 }
 
 func DefaultSeedLines() []domain.Line {
-	return []domain.Line{
-		{ID: "LINE_500T", Name: "500T Tuzla - Cevizlibağ", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_14ES", Name: "14ES Esenkent - Kadıköy", Mode: domain.ModeBus, Operator: "ozel_halk", IsActive: true},
-		{ID: "LINE_T1", Name: "T1 Kabataş - Bağcılar Tramvay", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
-		{ID: "LINE_VAPUR_KE", Name: "Kadıköy - Eminönü Vapuru", Mode: domain.ModeFerry, Operator: "belediye", IsActive: true},
-		{ID: "LINE_M1A", Name: "M1A Yenikapı - Atatürk Havalimanı Metro", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
-		{ID: "LINE_M2", Name: "M2 Yenikapı - Hacıosman Metro", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
-		{ID: "LINE_M3", Name: "M3 Kirazlı - Kayaşehir Metro", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
-		{ID: "LINE_M4", Name: "M4 Kadıköy - Sabiha Gökçen Metro", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
-		{ID: "LINE_M5", Name: "M5 Üsküdar - Çekmeköy Metro", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
-		{ID: "LINE_M7", Name: "M7 Yıldız - Mahmutbey Metro", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
-		{ID: "LINE_M8", Name: "M8 Bostancı - Parseller Metro", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
-		{ID: "LINE_M9", Name: "M9 Ataköy - Olimpiyat Metro", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
-		{ID: "LINE_M11", Name: "M11 Gayrettepe - İstanbul Havalimanı", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
-		{ID: "LINE_T4", Name: "T4 Topkapı - Mescid-i Selam Tramvay", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
-		{ID: "LINE_T5", Name: "T5 Eminönü - Alibeyköy Tramvay", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
-		{ID: "LINE_VAPUR_BU", Name: "Beşiktaş - Üsküdar Vapuru", Mode: domain.ModeFerry, Operator: "belediye", IsActive: true},
-		{ID: "LINE_VAPUR_KK", Name: "Kadıköy - Karaköy Vapuru", Mode: domain.ModeFerry, Operator: "belediye", IsActive: true},
-		{ID: "LINE_VAPUR_BO", Name: "Boğaz Hattı Vapuru", Mode: domain.ModeFerry, Operator: "belediye", IsActive: true},
-		{ID: "LINE_VAPUR_ADALAR", Name: "Bostancı - Adalar Vapuru", Mode: domain.ModeFerry, Operator: "belediye", IsActive: true},
-		{ID: "LINE_34AS", Name: "34AS Avcılar - Söğütlüçeşme Metrobüs", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_34BZ", Name: "34BZ Beylikdüzü - Zincirlikuyu Metrobüs", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_34G", Name: "34G Beylikdüzü - Söğütlüçeşme Metrobüs", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_34Z", Name: "34Z Zincirlikuyu - Söğütlüçeşme Metrobüs", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_15F", Name: "15F Beykoz - Kadıköy", Mode: domain.ModeBus, Operator: "ozel_halk", IsActive: true},
-		{ID: "LINE_16D", Name: "16D Altkaynarca - Pendik - Kadıköy", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_19F", Name: "19F Fındıklı Mahallesi - Kadıköy", Mode: domain.ModeBus, Operator: "ozel_halk", IsActive: true},
-		{ID: "LINE_25T", Name: "25T Sarıyer - Taksim", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_40T", Name: "40T İstinye Dereiçi - Taksim", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_70FE", Name: "70FE Feriköy - Eminönü", Mode: domain.ModeBus, Operator: "ozel_halk", IsActive: true},
-		{ID: "LINE_89C", Name: "89C Başakşehir - Taksim", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_97GE", Name: "97GE Güneşli - Eminönü", Mode: domain.ModeBus, Operator: "ozel_halk", IsActive: true},
-		{ID: "LINE_145T", Name: "145T Beylikdüzü - Taksim", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_150", Name: "150 Hacıosman Metro - Sarıyer", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_151", Name: "151 Kilyos - Hacıosman Metro", Mode: domain.ModeBus, Operator: "ozel_halk", IsActive: true},
-		{ID: "LINE_152", Name: "152 Zekeriyaköy - Hacıosman Metro", Mode: domain.ModeBus, Operator: "ozel_halk", IsActive: true},
-		{ID: "LINE_153", Name: "153 Bahçeköy - Sarıyer", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_154", Name: "154 Hacıosman Metro - Koç Üniversitesi", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_250", Name: "250 Sabiha Gökçen - İzmit Otogar", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_500ES", Name: "500ES Tuzla - Esenler Otogar", Mode: domain.ModeBus, Operator: "ozel_halk", IsActive: true},
-		{ID: "LINE_E10", Name: "E-10 Sabiha Gökçen Havalimanı - Kadıköy", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_800", Name: "800 Menemen Aktarma - Bornova Metro (ESHOT)", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_470", Name: "470 Tınaztepe - Lozan Meydanı (ESHOT)", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_35", Name: "35 Ballıkuyu - Konak (ESHOT)", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_5", Name: "5 Narlıdere - Üçkuyular İskele (ESHOT)", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_253", Name: "253 Halkapınar Metro - Konak (ESHOT)", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
-		{ID: "LINE_680", Name: "680 Bozyaka - Konak (ESHOT)", Mode: domain.ModeBus, Operator: "belediye", IsActive: true},
+	records := readOfficialCSV("data/eshot-otobus-hatlari.csv", 6)
+	lines := make([]domain.Line, 0, len(records)+4)
+	seen := make(map[string]struct{}, len(records)+4)
+	legacyIDs := make(map[string]struct{})
+	for _, id := range LegacyIstanbulSeedLineIDs() {
+		legacyIDs[id] = struct{}{}
+	}
+	for _, row := range records[1:] {
+		number := strings.TrimSpace(row[0])
+		name := strings.TrimSpace(row[1])
+		if number == "" || name == "" {
+			continue
+		}
+		id := "LINE_" + number
+		if _, conflictsWithHistoricalIstanbulLine := legacyIDs[id]; conflictsWithHistoricalIstanbulLine {
+			id = "LINE_ESHOT_" + number
+		}
+		if _, exists := seen[id]; exists {
+			panic("duplicate ESHOT line number: " + number)
+		}
+		seen[id] = struct{}{}
+		lines = append(lines, domain.Line{ID: id, Name: number + " " + name, Mode: domain.ModeBus, Operator: "belediye", IsActive: true})
+	}
+	// İzmir Büyükşehir Belediyesi confirms these operating tram corridors.
+	lines = append(lines,
+		domain.Line{ID: "LINE_TRAM_KONAK", Name: "Konak Tramvayı — Halkapınar - Fahrettin Altay", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
+		domain.Line{ID: "LINE_TRAM_KARSIYAKA", Name: "Karşıyaka Tramvayı — Alaybey - Flamingo", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
+		domain.Line{ID: "LINE_TRAM_CIGLI", Name: "Çiğli Tramvayı — Flamingo - Ataşehir", Mode: domain.ModeTram, Operator: "belediye", IsActive: true},
+		domain.Line{ID: "LINE_IZDENIZ_BOSTANLI_KONAK", Name: "İZDENİZ Bostanlı - Karşıyaka - Konak", Mode: domain.ModeFerry, Operator: "belediye", IsActive: true},
+	)
+	return lines
+}
+
+func LegacyIstanbulSeedLineIDs() []string {
+	return []string{
+		"LINE_500T", "LINE_14ES", "LINE_T1", "LINE_VAPUR_KE", "LINE_M1A", "LINE_M2", "LINE_M3", "LINE_M4",
+		"LINE_M5", "LINE_M7", "LINE_M8", "LINE_M9", "LINE_M11", "LINE_T4", "LINE_T5", "LINE_VAPUR_BU",
+		"LINE_VAPUR_KK", "LINE_VAPUR_BO", "LINE_VAPUR_ADALAR", "LINE_34AS", "LINE_34BZ", "LINE_34G", "LINE_34Z",
+		"LINE_15F", "LINE_16D", "LINE_19F", "LINE_25T", "LINE_40T", "LINE_70FE", "LINE_89C", "LINE_97GE",
+		"LINE_145T", "LINE_150", "LINE_151", "LINE_152", "LINE_153", "LINE_154", "LINE_250", "LINE_500ES", "LINE_E10",
 	}
 }
 
 func DefaultSeedStations() []domain.Station {
-	return []domain.Station{
-		{ID: "STAT_KADIKOY", Name: "Kadıköy İskele", Mode: domain.ModeFerry, Latitude: 40.9904, Longitude: 29.0254, ZoneID: 1},
-		{ID: "STAT_EMINONU", Name: "Eminönü İskele & Meydan", Mode: domain.ModeFerry, Latitude: 41.0175, Longitude: 28.9734, ZoneID: 1},
-		{ID: "STAT_KABATAS", Name: "Kabataş Tramvay", Mode: domain.ModeTram, Latitude: 41.0355, Longitude: 28.9922, ZoneID: 1},
-		{ID: "STAT_BAGCIAR", Name: "Bağcılar Meydan", Mode: domain.ModeTram, Latitude: 41.0341, Longitude: 28.8572, ZoneID: 2},
-		{ID: "STAT_AYRILIK", Name: "Ayrılık Çeşmesi", Mode: domain.ModeBus, Latitude: 40.9982, Longitude: 29.0305, ZoneID: 1},
-		{ID: "STAT_SARIYER", Name: "Sarıyer Merkez", Mode: domain.ModeBus, Latitude: 41.1685, Longitude: 29.0554, ZoneID: 3},
+	records := readOfficialCSV("data/eshot-otobus-duraklari.csv", 5)
+	stations := make([]domain.Station, 0, len(records)-1)
+	for _, row := range records[1:] {
+		id, errID := strconv.Atoi(strings.TrimSpace(row[0]))
+		lat, errLat := strconv.ParseFloat(strings.TrimSpace(row[2]), 64)
+		lon, errLon := strconv.ParseFloat(strings.TrimSpace(row[3]), 64)
+		name := strings.TrimSpace(row[1])
+		if errID != nil || errLat != nil || errLon != nil || name == "" || lat < 37 || lat > 39 || lon < 26 || lon > 28 {
+			continue
+		}
+		stations = append(stations, domain.Station{ID: fmt.Sprintf("STAT_ESHOT_%d", id), Name: name, Mode: domain.ModeBus, Latitude: lat, Longitude: lon, ZoneID: 1})
 	}
+	return stations
+}
+
+func readOfficialCSV(path string, expectedColumns int) [][]string {
+	file, err := officialTransitData.Open(path)
+	if err != nil {
+		panic("official transit data unavailable: " + err.Error())
+	}
+	defer file.Close()
+	reader := csv.NewReader(file)
+	reader.Comma = ';'
+	reader.FieldsPerRecord = expectedColumns
+	reader.LazyQuotes = false
+	var records [][]string
+	for {
+		row, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			panic("invalid official transit CSV " + path + ": " + err.Error())
+		}
+		records = append(records, row)
+	}
+	return records
 }
 
 func DefaultSeedTariff() domain.Tariff {
 	return domain.Tariff{
-		ID:                       "TARIFF_ISTANBUL_STD",
-		Name:                     "İstanbul Şehir İçi Entegre Tarife",
+		ID:                       "TARIFF_IZMIR_STD",
+		Name:                     "AktarBilet Simülasyon Tarifesi",
 		Mode:                     domain.ModeBus,
 		BaseFareKurus:            2000,   // 20.00 TL
 		StudentFareKurus:         1000,   // 10.00 TL
@@ -154,20 +206,60 @@ type SeedValidator struct {
 
 func DefaultSeedValidators() []SeedValidator {
 	return []SeedValidator{
-		{ID: "VAL_500T_01", LineID: "LINE_500T", StationID: "STAT_AYRILIK", Plate: "34 HO 1001"},
-		{ID: "VAL_14ES_01", LineID: "LINE_14ES", StationID: "STAT_KADIKOY", Plate: "34 HO 2002"},
-		{ID: "VAL_T1_01", LineID: "LINE_T1", StationID: "STAT_KABATAS", Plate: "T1-TR-01"},
-		{ID: "VAL_VAPUR_01", LineID: "LINE_VAPUR_KE", StationID: "STAT_KADIKOY", Plate: "SH-VAPUR-01"},
+		{ID: "VAL_500T_01", LineID: "LINE_5", StationID: "STAT_ESHOT_10177", Plate: "IZM-DEMO-01"},
+		{ID: "VAL_14ES_01", LineID: "LINE_10", StationID: "STAT_ESHOT_10145", Plate: "IZM-DEMO-02"},
+		{ID: "VAL_T1_01", LineID: "LINE_15", StationID: "STAT_ESHOT_10008", Plate: "IZM-DEMO-03"},
+		{ID: "VAL_VAPUR_01", LineID: "LINE_16", StationID: "STAT_ESHOT_10255", Plate: "IZM-DEMO-04"},
 	}
 }
 
 func DefaultDemoCards(yolcuUID *uuid.UUID) []domain.Card {
+	userIDs := make(map[string]uuid.UUID)
+	if yolcuUID != nil {
+		userIDs["yolcu@aktarbilet.gov.tr"] = *yolcuUID
+	}
+	return DefaultDemoCardsForUsers(userIDs)
+}
+
+func DefaultDemoCardsForUsers(userIDs map[string]uuid.UUID) []domain.Card {
+	userID := func(email string) *uuid.UUID {
+		id, ok := userIDs[email]
+		if !ok {
+			return nil
+		}
+		return &id
+	}
 	return []domain.Card{
+		// Unassigned compatibility fixture retained for existing inspection and API scenarios.
 		{
 			ID:           "CARD_TAM_001",
 			CardType:     domain.CardTypeTam,
 			BalanceKurus: 50000, // 500.00 TL (Not assigned to yolcu user, owned independently)
 			UserID:       nil,
+		},
+		{
+			ID:           "CARD_YOLCU_001",
+			CardType:     domain.CardTypeTam,
+			BalanceKurus: 50000,
+			UserID:       userID("yolcu@aktarbilet.gov.tr"),
+		},
+		{
+			ID:           "CARD_DEMO_OGRENCI_001",
+			CardType:     domain.CardTypeOgrenci,
+			BalanceKurus: 25000,
+			UserID:       userID("ogrenci.demo@aktarbilet.gov.tr"),
+		},
+		{
+			ID:           "CARD_DEMO_YASLI_001",
+			CardType:     domain.CardTypeYasli,
+			BalanceKurus: 15000,
+			UserID:       userID("yasli.demo@aktarbilet.gov.tr"),
+		},
+		{
+			ID:           "CARD_DEMO_UCRETSIZ_001",
+			CardType:     domain.CardTypeUcretsiz,
+			BalanceKurus: 0,
+			UserID:       userID("ucretsiz.demo@aktarbilet.gov.tr"),
 		},
 		{
 			ID:           "CARD_OGRENCI_001",
@@ -188,12 +280,6 @@ func DefaultDemoCards(yolcuUID *uuid.UUID) []domain.Card {
 			IsBlacklisted:   true,
 			BlacklistReason: "Sahte kimlik tespiti (Kara liste demo)",
 			UserID:          nil,
-		},
-		{
-			ID:           "CARD_YOLCU_001",
-			CardType:     domain.CardTypeTam,
-			BalanceKurus: 50000, // 500.00 TL (Owned by yolcu@aktarbilet.gov.tr)
-			UserID:       yolcuUID,
 		},
 	}
 }
@@ -263,20 +349,48 @@ func SeedDatabaseWithExecutor(ctx context.Context, pool DBExecutor, authSvc *aut
 			return fmt.Errorf("hat seed hatası (%s): %w", l.ID, err)
 		}
 	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE jw_lines
+		SET is_active = false,
+		    name = CASE id
+		        WHEN 'LINE_152' THEN '152 Zekeriyaköy - Hacıosman Metro'
+		        WHEN 'LINE_153' THEN '153 Bahçeköy - Sarıyer'
+		        WHEN 'LINE_154' THEN '154 Hacıosman Metro - Koç Üniversitesi'
+		        ELSE name
+		    END
+		WHERE id = ANY($1::varchar[])
+	`, LegacyIstanbulSeedLineIDs()); err != nil {
+		return fmt.Errorf("eski İstanbul hatları pasife alınamadı: %w", err)
+	}
 
 	// 3. Duraklar
 	stations := DefaultSeedStations()
 
-	for _, s := range stations {
-		_, err := pool.Exec(ctx, `
-			INSERT INTO jw_stations (id, name, mode, latitude, longitude, zone_id, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, NOW())
-			ON CONFLICT (id) DO UPDATE 
-			SET name = EXCLUDED.name, latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude
-		`, s.ID, s.Name, s.Mode, s.Latitude, s.Longitude, s.ZoneID)
-		if err != nil {
-			return fmt.Errorf("durak seed hatası (%s): %w", s.ID, err)
+	for offset := 0; offset < len(stations); offset += 500 {
+		end := offset + 500
+		if end > len(stations) {
+			end = len(stations)
 		}
+		batch := stations[offset:end]
+		ids, names, latitudes, longitudes := make([]string, len(batch)), make([]string, len(batch)), make([]string, len(batch)), make([]string, len(batch))
+		for i, station := range batch {
+			ids[i], names[i] = station.ID, station.Name
+			latitudes[i] = strconv.FormatFloat(station.Latitude, 'f', -1, 64)
+			longitudes[i] = strconv.FormatFloat(station.Longitude, 'f', -1, 64)
+		}
+		_, err := pool.Exec(ctx, `
+			INSERT INTO jw_stations (id, name, mode, latitude, longitude, zone_id, is_active, created_at)
+			SELECT id, name, 'bus', latitude::numeric, longitude::numeric, 1, true, NOW()
+			FROM unnest($1::text[], $2::text[], $3::text[], $4::text[]) AS s(id, name, latitude, longitude)
+			ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, mode = EXCLUDED.mode,
+				latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude, is_active = true
+		`, ids, names, latitudes, longitudes)
+		if err != nil {
+			return fmt.Errorf("ESHOT durakları seed edilemedi (batch %d): %w", offset/500+1, err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `UPDATE jw_stations SET is_active = false WHERE id IN ('STAT_KADIKOY','STAT_EMINONU','STAT_KABATAS','STAT_BAGCIAR','STAT_AYRILIK','STAT_SARIYER')`); err != nil {
+		return fmt.Errorf("eski İstanbul durakları pasife alınamadı: %w", err)
 	}
 
 	// 4. Standart Tarife
@@ -289,12 +403,15 @@ func SeedDatabaseWithExecutor(ctx context.Context, pool DBExecutor, authSvc *aut
 			student_daily_limit, monthly_capping_limit_kurus, is_active, created_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
 		ON CONFLICT (id) DO UPDATE 
-		SET base_fare_kurus = EXCLUDED.base_fare_kurus, is_active = EXCLUDED.is_active
+		SET name = EXCLUDED.name, base_fare_kurus = EXCLUDED.base_fare_kurus, is_active = EXCLUDED.is_active
 	`, tariff.ID, tariff.Name, tariff.Mode, tariff.BaseFareKurus, tariff.StudentFareKurus, tariff.ElderlyFareKurus,
 		tariff.Transfer1DiscountPct, tariff.Transfer2DiscountPct, tariff.NightSurchargePct,
 		tariff.StudentDailyLimit, tariff.MonthlyCappingLimitKurus, tariff.IsActive)
 	if err != nil {
 		return fmt.Errorf("tarife seed hatası: %w", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE jw_tariffs SET is_active = false WHERE id = 'TARIFF_ISTANBUL_STD'`); err != nil {
+		return fmt.Errorf("eski İstanbul tarifesi pasife alınamadı: %w", err)
 	}
 
 	// 5. Validatörler
@@ -313,13 +430,7 @@ func SeedDatabaseWithExecutor(ctx context.Context, pool DBExecutor, authSvc *aut
 	}
 
 	// 6. Demo Kartlar
-	yolcuUID, hasYolcu := userIDs["yolcu@aktarbilet.gov.tr"]
-	var yolcuUIDPtr *uuid.UUID
-	if hasYolcu {
-		yolcuUIDPtr = &yolcuUID
-	}
-
-	demoCards := DefaultDemoCards(yolcuUIDPtr)
+	demoCards := DefaultDemoCardsForUsers(userIDs)
 
 	for _, c := range demoCards {
 		// Kart daha önce eklenmiş mi kontrol et
@@ -397,15 +508,17 @@ func SeedDatabaseWithExecutor(ctx context.Context, pool DBExecutor, authSvc *aut
 		) VALUES 
 		(
 			'00000000-0000-0000-0000-000000000000', '2026-EYLUL',
-			NOW() - INTERVAL '60 days', NOW() - INTERVAL '30 days', true, NOW() - INTERVAL '30 days',
+			DATE_TRUNC('month', NOW()) - INTERVAL '1 month', DATE_TRUNC('month', NOW()), true, DATE_TRUNC('month', NOW()),
 			146860000, 85160000, 36900000, NOW() - INTERVAL '30 days'
 		),
 		(
 			'00000000-0000-0000-0000-000000000001', '2026-EKIM',
-			NOW() - INTERVAL '30 days', NOW(), false, NULL,
+			DATE_TRUNC('month', NOW()), DATE_TRUNC('month', NOW()) + INTERVAL '1 month', false, NULL,
 			146860000, 85160000, 36900000, NOW()
 		) ON CONFLICT (id) DO UPDATE SET
-			period_name = EXCLUDED.period_name;
+			period_name = EXCLUDED.period_name,
+			start_date = EXCLUDED.start_date,
+			end_date = EXCLUDED.end_date;
 	`)
 	if err != nil {
 		slog.Warn("Settlement periods seed uyarısı", "error", err)

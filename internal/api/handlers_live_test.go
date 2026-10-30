@@ -164,5 +164,24 @@ func TestAPI_LiveDatabaseEndpoints(t *testing.T) {
 		if wStorno.Code != http.StatusOK {
 			t.Fatalf("Storno 200 dönmeli, alınan: %d (%s)", wStorno.Code, wStorno.Body.String())
 		}
+
+		// Anahtar verilmeyen bağımsız storno istekleri aynı boş anahtarı paylaşmamalı.
+		reqStornoAgain := httptest.NewRequest("POST", "/api/v1/settlements/storno", bytes.NewReader(stornoBody))
+		reqStornoAgain.Header.Set("Authorization", "Bearer "+muhasebeToken)
+		wStornoAgain := httptest.NewRecorder()
+		router.ServeHTTP(wStornoAgain, reqStornoAgain)
+		if wStornoAgain.Code != http.StatusOK {
+			t.Fatalf("Anahtarsız bağımsız storno 200 dönmeli, alınan: %d (%s)", wStornoAgain.Code, wStornoAgain.Body.String())
+		}
+		var unkeyedStornoCount int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM jw_settlement_ledger
+			WHERE period_id = $1 AND is_storno = true AND idempotency_key IS NULL
+		`, periodID).Scan(&unkeyedStornoCount); err != nil {
+			t.Fatalf("Anahtarsız storno kayıtları sorgulanamadı: %v", err)
+		}
+		if unkeyedStornoCount != 2 {
+			t.Fatalf("İki ayrı anahtarsız storno ayrı kaydedilmeli, bulunan: %d", unkeyedStornoCount)
+		}
 	}
 }

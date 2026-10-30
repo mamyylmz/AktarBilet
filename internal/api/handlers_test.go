@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -259,8 +260,8 @@ func TestAPI_ProcessTap_And_Batch(t *testing.T) {
 		"validator_id": "VAL_500T_01",
 		"sequence_no":  1001,
 		"card_id":      "CARD_YOLCU_001",
-		"line_id":      "LINE_500T",
-		"station_id":   "STAT_KADIKOY",
+		"line_id":      "LINE_5",
+		"station_id":   "STAT_ESHOT_10145",
 		"direction":    1,
 		"tapped_at":    time.Now().Format(time.RFC3339),
 	})
@@ -286,8 +287,8 @@ func TestAPI_ProcessTap_And_Batch(t *testing.T) {
 			"validator_id": "VAL_500T_02",
 			"sequence_no":  2001,
 			"card_id":      "CARD_YOLCU_001",
-			"line_id":      "LINE_500T",
-			"station_id":   "STAT_AYRILIK",
+			"line_id":      "LINE_5",
+			"station_id":   "STAT_ESHOT_10177",
 			"direction":    1,
 			"tapped_at":    time.Now().Format(time.RFC3339),
 		},
@@ -301,8 +302,8 @@ func TestAPI_ProcessTap_And_Batch(t *testing.T) {
 		"validator_id": "VAL_500T_01",
 		"sequence_no":  3001,
 		"card_id":      "CARD_YOLCU_001",
-		"line_id":      "LINE_500T",
-		"station_id":   "STAT_AYRILIK",
+		"line_id":      "LINE_5",
+		"station_id":   "STAT_ESHOT_10177",
 		"direction":    1,
 		"tapped_at":    time.Now().Format(time.RFC3339),
 	})
@@ -649,8 +650,8 @@ func TestAPI_ComprehensiveBranches(t *testing.T) {
 			"validator_id": "VAL_500T_01",
 			"sequence_no":  123,
 			"card_id":      "CARD_YOLCU_001",
-			"line_id":      "LINE_500T",
-			"station_id":   "STAT_KADIKOY",
+			"line_id":      "LINE_5",
+			"station_id":   "STAT_ESHOT_10145",
 			"direction":    1,
 			"tapped_at":    time.Now().Format(time.RFC3339),
 		},
@@ -712,10 +713,71 @@ func (m *mockAPIRows) Values() ([]any, error) { return nil, nil }
 func (m *mockAPIRows) RawValues() [][]byte    { return nil }
 func (m *mockAPIRows) Conn() *pgx.Conn        { return nil }
 
+type mockAPITx struct {
+	execFunc     func(sql string, args ...any) (pgconn.CommandTag, error)
+	queryRowFunc func(sql string, args ...any) pgx.Row
+	queryFunc    func(sql string, args ...any) (pgx.Rows, error)
+	commitFunc   func(ctx context.Context) error
+	rollbackFunc func(ctx context.Context) error
+}
+
+func (m *mockAPITx) Begin(ctx context.Context) (pgx.Tx, error) { return m, nil }
+func (m *mockAPITx) Commit(ctx context.Context) error {
+	if m.commitFunc != nil {
+		return m.commitFunc(ctx)
+	}
+	return nil
+}
+func (m *mockAPITx) Rollback(ctx context.Context) error {
+	if m.rollbackFunc != nil {
+		return m.rollbackFunc(ctx)
+	}
+	return nil
+}
+func (m *mockAPITx) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
+	return 0, nil
+}
+func (m *mockAPITx) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults { return nil }
+func (m *mockAPITx) LargeObjects() pgx.LargeObjects                               { return pgx.LargeObjects{} }
+func (m *mockAPITx) Prepare(ctx context.Context, name, sql string) (*pgconn.StatementDescription, error) {
+	return nil, nil
+}
+func (m *mockAPITx) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+	if m.execFunc != nil {
+		return m.execFunc(sql, arguments...)
+	}
+	return pgconn.NewCommandTag("UPDATE 1"), nil
+}
+func (m *mockAPITx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if m.queryFunc != nil {
+		return m.queryFunc(sql, args...)
+	}
+	return &mockAPIRows{}, nil
+}
+func (m *mockAPITx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if m.queryRowFunc != nil {
+		return m.queryRowFunc(sql, args...)
+	}
+	return &mockAPIRow{}
+}
+func (m *mockAPITx) Conn() *pgx.Conn { return nil }
+
 type mockAPIPool struct {
 	execFunc     func(sql string, args ...any) (pgconn.CommandTag, error)
 	queryFunc    func(sql string, args ...any) (pgx.Rows, error)
 	queryRowFunc func(sql string, args ...any) pgx.Row
+	beginFunc    func(ctx context.Context) (pgx.Tx, error)
+}
+
+func (m *mockAPIPool) Begin(ctx context.Context) (pgx.Tx, error) {
+	if m.beginFunc != nil {
+		return m.beginFunc(ctx)
+	}
+	return &mockAPITx{
+		execFunc:     m.execFunc,
+		queryRowFunc: m.queryRowFunc,
+		queryFunc:    m.queryFunc,
+	}, nil
 }
 
 func (m *mockAPIPool) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
@@ -784,7 +846,7 @@ func TestAPI_DatabaseQueryMocks(t *testing.T) {
 		return &mockAPIRows{
 			count: 1,
 			scanFunc: func(dest ...any) error {
-				*dest[0].(*string) = "LINE_500T"
+				*dest[0].(*string) = "LINE_5"
 				*dest[1].(*string) = "500T Tuzla"
 				*dest[2].(*domain.LineMode) = domain.ModeBus
 				*dest[3].(*string) = "belediye"
@@ -806,7 +868,7 @@ func TestAPI_DatabaseQueryMocks(t *testing.T) {
 		return &mockAPIRows{
 			count: 1,
 			scanFunc: func(dest ...any) error {
-				*dest[0].(*string) = "STAT_KADIKOY"
+				*dest[0].(*string) = "STAT_ESHOT_10145"
 				*dest[1].(*string) = "Kadıköy İskele"
 				*dest[2].(*domain.LineMode) = domain.ModeFerry
 				*dest[3].(*float64) = 40.99
@@ -900,7 +962,7 @@ func TestAPI_DatabaseQueryMocks(t *testing.T) {
 		return &mockAPIRows{
 			count: 1,
 			scanFunc: func(dest ...any) error {
-				*dest[0].(*string) = "LINE_500T"
+				*dest[0].(*string) = "LINE_5"
 				*dest[1].(*string) = "500T Tuzla"
 				*dest[2].(*string) = "bus"
 				*dest[3].(*string) = "belediye"
@@ -1086,8 +1148,8 @@ func TestAPI_DeviceAuthSignatureVerification(t *testing.T) {
 	tapReq := TapRequest{
 		CardID:      "CARD_DEVICE_01",
 		ValidatorID: "VAL_SECURE_01",
-		LineID:      "LINE_500T",
-		StationID:   "STAT_KADIKOY",
+		LineID:      "LINE_5",
+		StationID:   "STAT_ESHOT_10145",
 		SequenceNo:  1,
 		Direction:   1,
 		TappedAt:    time.Now(),
@@ -1135,7 +1197,7 @@ func TestAPI_OptimizationApproval_And_Financials(t *testing.T) {
 
 	// 2. Headway scenario calculation
 	headwayBody, _ := json.Marshal(map[string]interface{}{
-		"line_id":                    "LINE_500T",
+		"line_id":                    "LINE_5",
 		"target_headway_mins":        8,
 		"fleet_capacity_per_vehicle": 50,
 		"peak_hour":                  true,
@@ -1150,7 +1212,7 @@ func TestAPI_OptimizationApproval_And_Financials(t *testing.T) {
 
 	// 3. Approve optimization scenario (Unauthorized without role)
 	apprBody, _ := json.Marshal(map[string]interface{}{
-		"line_id":                    "LINE_500T",
+		"line_id":                    "LINE_5",
 		"current_headway_minutes":    15,
 		"target_headway_minutes":     8,
 		"fleet_capacity":             50,
@@ -1288,13 +1350,13 @@ func TestAPI_ExtendedCoverage_Endpoints(t *testing.T) {
 	}
 
 	// 3. ReopenSettlementPeriod
-	// 3a. Invalid period name -> 400
+	// 3a. Yeni dönem adıyla reopen -> 200 (dönem otomatik oluşturulup açılır)
 	w = httptest.NewRecorder()
 	req = httptest.NewRequest("POST", "/api/v1/settlements/reopen", bytes.NewReader([]byte(`{"period_name":"1999-OCAK"}`)))
 	req.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
 	rig.router.ServeHTTP(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("Geçersiz dönem 400 dönmeli, alınan: %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("Reopen (bellek modu) 200 dönmeli, alınan: %d", w.Code)
 	}
 
 	// 3b. Valid reopen in memory -> 200
@@ -1532,5 +1594,109 @@ func TestAPI_KeysetPagination(t *testing.T) {
 	rig.router.ServeHTTP(wAnom, reqAnom)
 	if wAnom.Code != http.StatusOK {
 		t.Fatalf("Anomalies pagination 200 dönmeli, alınan: %d", wAnom.Code)
+	}
+}
+
+func TestAPI_SettlementAuditAtomicityRollback(t *testing.T) {
+	rig := setupTestRig()
+	pool := &mockAPIPool{}
+	h := NewAPIHandler(nil, rig.authSvc, pricing.NewPricingEngine(), rig.ledgerSvc, rig.syncSvc, rig.settleSvc, rig.anomalyDet)
+	h.SetDBPool(pool)
+	router := SetupRouter(h, "f85f26")
+
+	rollbackCalled := false
+	commitCalled := false
+
+	pool.queryRowFunc = func(sql string, args ...any) pgx.Row {
+		if strings.Contains(sql, "FROM jw_tf_users") {
+			return &mockAPIRow{
+				scanFunc: func(dest ...any) error {
+					*dest[0].(*domain.UserRole) = domain.RoleMuhasebe
+					return nil
+				},
+			}
+		}
+		return &mockAPIRow{}
+	}
+
+	pool.beginFunc = func(ctx context.Context) (pgx.Tx, error) {
+		return &mockAPITx{
+			rollbackFunc: func(ctx context.Context) error {
+				rollbackCalled = true
+				return nil
+			},
+			commitFunc: func(ctx context.Context) error {
+				commitCalled = true
+				return nil
+			},
+			queryRowFunc: func(sql string, args ...any) pgx.Row {
+				if strings.Contains(sql, "FROM jw_settlement_periods") {
+					return &mockAPIRow{
+						scanFunc: func(dest ...any) error {
+							*dest[0].(*bool) = false
+							*dest[1].(**time.Time) = nil
+							return nil
+						},
+					}
+				}
+				return &mockAPIRow{}
+			},
+			execFunc: func(sql string, args ...any) (pgconn.CommandTag, error) {
+				if strings.Contains(sql, "INSERT INTO jw_audit_logs") {
+					return pgconn.CommandTag{}, errors.New("simulated audit log disk full")
+				}
+				return pgconn.NewCommandTag("UPDATE 1"), nil
+			},
+		}, nil
+	}
+
+	closeBody, _ := json.Marshal(map[string]interface{}{
+		"period_id": "00000000-0000-0000-0000-000000000001",
+	})
+	req := httptest.NewRequest("POST", "/api/v1/settlements/close", bytes.NewReader(closeBody))
+	req.Header.Set("Authorization", "Bearer "+rig.token(rig.muhasebe))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("Audit hatasında 500 dönmeli, alınan: %d", w.Code)
+	}
+	if !rollbackCalled {
+		t.Fatal("Audit log hatasında veritabanı rollback çağrılmadı!")
+	}
+	if commitCalled {
+		t.Fatal("Audit log hatasında veritabanı commit çağrılmamalıydı!")
+	}
+}
+
+func TestAPI_RequireRole_FailClosedOnDeletedUser(t *testing.T) {
+	rig := setupTestRig()
+	pool := &mockAPIPool{}
+	h := NewAPIHandler(nil, rig.authSvc, pricing.NewPricingEngine(), rig.ledgerSvc, rig.syncSvc, rig.settleSvc, rig.anomalyDet)
+	h.SetDBPool(pool)
+	router := SetupRouter(h, "f85f26")
+
+	// Simulate deleted user: QueryRow returns pgx.ErrNoRows
+	pool.queryRowFunc = func(sql string, args ...any) pgx.Row {
+		if strings.Contains(sql, "FROM jw_tf_users") {
+			return &mockAPIRow{
+				scanFunc: func(dest ...any) error {
+					return pgx.ErrNoRows
+				},
+			}
+		}
+		return &mockAPIRow{}
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/settlements", nil)
+	req.Header.Set("Authorization", "Bearer "+rig.token(rig.muhasebe))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("Silinmiş veya bulunamayan kullanıcı için 401 Unauthorized dönmeli, alınan: %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "USER_REVOKED") {
+		t.Fatalf("Hata yanıtında USER_REVOKED kodu bekleniyordu, alınan: %s", w.Body.String())
 	}
 }

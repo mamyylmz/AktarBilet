@@ -1,6 +1,9 @@
 package api
 
 import (
+	"os"
+	"strings"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -19,14 +22,23 @@ func SetupRouter(h *APIHandler, ddoStamp string) *chi.Mux {
 	r.Use(DDOStampMiddleware(ddoStamp))
 
 	// 3. CORS Yapılandırması (Wildcard credentials açık bırakılmaz, güvenli kökenler tanımlanır)
+	allowedOrigins := []string{
+		"http://localhost:3000", "http://127.0.0.1:3000",
+		"http://localhost:13000", "http://127.0.0.1:13000",
+		"http://localhost:5173", "http://127.0.0.1:5173",
+		"http://localhost:8080", "http://127.0.0.1:8080",
+		"http://localhost", "capacitor://localhost",
+	}
+	if envOrigins := os.Getenv("ALLOWED_ORIGINS"); envOrigins != "" {
+		for _, o := range strings.Split(envOrigins, ",") {
+			if trimmed := strings.TrimSpace(o); trimmed != "" {
+				allowedOrigins = append(allowedOrigins, trimmed)
+			}
+		}
+	}
+
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{
-			"http://localhost:3000", "http://127.0.0.1:3000",
-			"http://localhost:13000", "http://127.0.0.1:13000",
-			"http://localhost:5173", "http://127.0.0.1:5173",
-			"http://localhost:8080", "http://127.0.0.1:8080",
-			"https://*", "http://*",
-		},
+		AllowedOrigins: allowedOrigins,
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders: []string{
 			"Accept",
@@ -61,6 +73,7 @@ func SetupRouter(h *APIHandler, ddoStamp string) *chi.Mux {
 		r.Post("/auth/login", h.Login)
 		r.With(RequireAuth()).Get("/auth/me", h.GetMe)
 		r.With(RequireAuth()).Post("/auth/switch-role", h.SwitchRole)
+		r.With(RequireRole(h.pool, domain.RoleAdmin)).Get("/admin/users", h.ListAdminUsers)
 
 		// Ulaşım Bilgileri (Herkese açık katalog ve hat yöneticisi yönetimi)
 		r.Get("/lines", h.ListLines)
@@ -76,6 +89,7 @@ func SetupRouter(h *APIHandler, ddoStamp string) *chi.Mux {
 		// Kart Yönetimi (Kimlik doğrulamalı & IDOR korumalı)
 		r.Route("/cards", func(r chi.Router) {
 			r.Get("/{id}", h.GetCard)
+			r.Get("/{id}/snapshot", h.GetCardSnapshot)
 			r.Get("/{id}/ledger", h.GetCardLedger)
 			r.Post("/{id}/recharge", h.RechargeCard)
 		})
@@ -98,6 +112,7 @@ func SetupRouter(h *APIHandler, ddoStamp string) *chi.Mux {
 			r.With(RequireRole(h.pool, domain.RoleMuhasebe, domain.RoleAdmin)).Post("/close", h.CloseSettlementPeriod)
 			r.With(RequireRole(h.pool, domain.RoleMuhasebe, domain.RoleAdmin)).Post("/reopen", h.ReopenSettlementPeriod)
 			r.With(RequireRole(h.pool, domain.RoleMuhasebe, domain.RoleAdmin)).Post("/storno", h.StornoSettlement)
+			r.With(RequireRole(h.pool, domain.RoleMuhasebe, domain.RoleAdmin)).Post("/adjustments/subsidy", h.AddSettlementSubsidy)
 		})
 
 		// Operasyon & Güvenlik İzleme (Operasyon & Admin)

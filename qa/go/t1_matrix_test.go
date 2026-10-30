@@ -69,7 +69,7 @@ func TestT1_01_CardTypesAndInitialFares(t *testing.T) {
 
 			// Oracle calculation
 			oracleRes := oracle.CalculateExpectedFare(refCard, refTariff, ReferenceTrip{
-				LineID: "LINE_500T", StationID: "STAT_1", Direction: 1, TappedAt: now,
+				LineID: "LINE_5", StationID: "STAT_1", Direction: 1, TappedAt: now,
 			}, nil)
 
 			if oracleRes.FareChargedKurus != tc.expectedFare {
@@ -77,7 +77,7 @@ func TestT1_01_CardTypesAndInitialFares(t *testing.T) {
 			}
 
 			// Production engine calculation
-			prodRes := engine.CalculateFare(card, tariff, "LINE_500T", "STAT_1", 1, now, nil)
+			prodRes := engine.CalculateFare(card, tariff, "LINE_5", "STAT_1", 1, now, nil)
 
 			if int64(prodRes.FareChargedKurus) != tc.expectedFare {
 				t.Errorf("[FAIL T1-01] %s: Beklenen %d kuruş, Production %d kuruş",
@@ -223,12 +223,12 @@ func TestT1_04_SameLineReverseDirection(t *testing.T) {
 
 	t.Run("ForwardThenReverseOnSameLine_MustChargeFullFare", func(t *testing.T) {
 		history := []pricing.TripHistoryItem{
-			{LineID: "LINE_500T", StationID: "STAT_KADIKOY", Direction: 1, TappedAt: t0, IsTransfer: false},
+			{LineID: "LINE_5", StationID: "STAT_ESHOT_10145", Direction: 1, TappedAt: t0, IsTransfer: false},
 		}
 
 		// 20 dk sonra aynı hatta TERS yön (Direction 2)
 		t1 := t0.Add(20 * time.Minute)
-		res := engine.CalculateFare(card, tariff, "LINE_500T", "STAT_CEVIZLIBAG", 2, t1, history)
+		res := engine.CalculateFare(card, tariff, "LINE_5", "STAT_CEVIZLIBAG", 2, t1, history)
 
 		if res.IsTransfer || res.FareChargedKurus != 2000 {
 			t.Errorf("[FAIL T1-04] Aynı hatta ters yöne geri dönüşe indirim uygulandı! Beklenen 2000, alınan: %d", res.FareChargedKurus)
@@ -237,11 +237,11 @@ func TestT1_04_SameLineReverseDirection(t *testing.T) {
 
 	t.Run("ForwardThenForwardOnSameLine_MustNotBeTransfer", func(t *testing.T) {
 		history := []pricing.TripHistoryItem{
-			{LineID: "LINE_500T", StationID: "STAT_A", Direction: 1, TappedAt: t0, IsTransfer: false},
+			{LineID: "LINE_5", StationID: "STAT_A", Direction: 1, TappedAt: t0, IsTransfer: false},
 		}
 
 		t1 := t0.Add(20 * time.Minute)
-		res := engine.CalculateFare(card, tariff, "LINE_500T", "STAT_B", 1, t1, history)
+		res := engine.CalculateFare(card, tariff, "LINE_5", "STAT_B", 1, t1, history)
 
 		if res.IsTransfer || res.FareChargedKurus != 2000 {
 			t.Errorf("[FAIL T1-04] Aynı hatta aynı yönde tekrar binişe aktarma indirimi verildi! Beklenen 2000, alınan: %d", res.FareChargedKurus)

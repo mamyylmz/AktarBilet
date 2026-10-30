@@ -402,10 +402,10 @@ func main() {
 	}
 
 	seedValidators := []SeedValidatorRef{
-		{ID: "VAL_500T_01", LineID: "LINE_500T", StationID: "STAT_AYRILIK"},
-		{ID: "VAL_14ES_01", LineID: "LINE_14ES", StationID: "STAT_KADIKOY"},
-		{ID: "VAL_T1_01", LineID: "LINE_T1", StationID: "STAT_KABATAS"},
-		{ID: "VAL_VAPUR_01", LineID: "LINE_VAPUR_KE", StationID: "STAT_KADIKOY"},
+		{ID: "VAL_500T_01", LineID: "LINE_5", StationID: "STAT_ESHOT_10177"},
+		{ID: "VAL_14ES_01", LineID: "LINE_10", StationID: "STAT_ESHOT_10145"},
+		{ID: "VAL_T1_01", LineID: "LINE_15", StationID: "STAT_ESHOT_10008"},
+		{ID: "VAL_VAPUR_01", LineID: "LINE_16", StationID: "STAT_ESHOT_10255"},
 	}
 
 	client := &http.Client{Timeout: 6 * time.Second}

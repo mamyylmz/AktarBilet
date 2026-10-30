@@ -11,7 +11,7 @@ test.describe('go-live database and transaction invariants', () => {
     const key = unique('DB-BAD-DIRECTION');
     expect(() => sql(`BEGIN;
       INSERT INTO jw_validator_events(idempotency_key,validator_id,sequence_no,card_id,line_id,station_id,direction,tapped_at,fare_charged_kurus)
-      VALUES ('${key}','VAL_500T_01',${Date.now()},'CARD_TAM_001','LINE_500T','STAT_AYRILIK',9,NOW(),0);
+      VALUES ('${key}','VAL_500T_01',${Date.now()},'CARD_TAM_001','LINE_5','STAT_ESHOT_10177',9,NOW(),0);
       ROLLBACK;`)).toThrow();
   });
 
@@ -39,7 +39,7 @@ test.describe('go-live database and transaction invariants', () => {
     const t1 = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const t2 = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     const tap = (card, time, station, line) => {
-      const validatorID = line === 'LINE_T1' ? 'VAL_T1_01' : 'VAL_500T_01';
+      const validatorID = line === 'LINE_15' ? 'VAL_T1_01' : 'VAL_500T_01';
       const thisSeq = Number(scalar(`SELECT COALESCE(MAX(sequence_no), 0) + 1 FROM jw_device_requests WHERE validator_id='${validatorID}'`));
       const idemp = unique(`OOO-${card}`);
       const data = { validator_id: validatorID, sequence_no: thisSeq, card_id: card,
@@ -49,10 +49,10 @@ test.describe('go-live database and transaction invariants', () => {
         data
       });
     };
-    expect((await tap(cardReverse, t2, 'STAT_KABATAS', 'LINE_T1')).status()).toBe(200);
-    expect((await tap(cardReverse, t1, 'STAT_AYRILIK', 'LINE_500T')).status()).toBe(200);
-    expect((await tap(cardOrdered, t1, 'STAT_AYRILIK', 'LINE_500T')).status()).toBe(200);
-    expect((await tap(cardOrdered, t2, 'STAT_KABATAS', 'LINE_T1')).status()).toBe(200);
+    expect((await tap(cardReverse, t2, 'STAT_ESHOT_10008', 'LINE_15')).status()).toBe(200);
+    expect((await tap(cardReverse, t1, 'STAT_ESHOT_10177', 'LINE_5')).status()).toBe(200);
+    expect((await tap(cardOrdered, t1, 'STAT_ESHOT_10177', 'LINE_5')).status()).toBe(200);
+    expect((await tap(cardOrdered, t2, 'STAT_ESHOT_10008', 'LINE_15')).status()).toBe(200);
     expect(scalar(`SELECT balance_kurus FROM jw_cards WHERE id='${cardReverse}'`))
       .toBe(scalar(`SELECT balance_kurus FROM jw_cards WHERE id='${cardOrdered}'`));
   });

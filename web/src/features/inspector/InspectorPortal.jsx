@@ -14,8 +14,8 @@ export function InspectorPortal({
   penaltyLoading = false,
   penalties = [],
 }) {
-  const [searchId, setSearchId] = useState('CARD_TAM_001');
-  const [penaltyCardId, setPenaltyCardId] = useState('CARD_TAM_001');
+  const [searchId, setSearchId] = useState('');
+  const [penaltyCardId, setPenaltyCardId] = useState('');
   const [penaltyAmount, setPenaltyAmount] = useState('200'); // 200 TL default matching public tariff
   const [penaltyReason, setPenaltyReason] = useState('kartsiz_binis');
 
@@ -58,11 +58,21 @@ export function InspectorPortal({
     {
       header: 'İhlal Sebebi',
       key: 'reason',
-      render: (row) => (
-        <span className="badge badge-danger">
-          {row.reason === 'kartsiz_binis' ? 'Kartsız / Yetkisiz Biniş' : row.reason}
-        </span>
-      ),
+      render: (row) => {
+        const reasonLabels = {
+          kartsiz_binis: 'Kartsız / Yetkisiz Biniş',
+          baskasinin_karti: 'Başkasına Ait Kart',
+          sahte_belge: 'Geçersiz İndirim Belgesi',
+          usulsuz_kart_kullanimi: 'Usulsüz Kart Kullanımı',
+          sahte_kart: 'Sahte / Değiştirilmiş Kart',
+          diger: 'Diğer İhlal',
+        };
+        return (
+          <span className="badge badge-danger">
+            {reasonLabels[row.reason] || row.reason}
+          </span>
+        );
+      },
     },
     {
       header: 'Tutanak Durumu',
@@ -87,7 +97,7 @@ export function InspectorPortal({
                   label="Sorgulanacak Kart ID"
                   value={searchId}
                   onChange={(e) => setSearchId(e.target.value)}
-                  placeholder="Örn: CARD_TAM_001"
+      placeholder="İncelenecek kart ID'si"
                   required
                 />
               </div>
@@ -115,7 +125,9 @@ export function InspectorPortal({
                 <div className="flex justify-between items-center">
                   <span className="text-sm font-semibold">Güncel Bakiye:</span>
                   <span className="font-mono text-lg font-bold text-success">
-                    {formatKurus(queriedCard.balance_kurus ?? 50000)}
+                    {queriedCard.balance_kurus !== undefined && queriedCard.balance_kurus !== null
+                      ? formatKurus(queriedCard.balance_kurus)
+                      : 'Bakiye bilgisi alınamadı'}
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
@@ -133,12 +145,12 @@ export function InspectorPortal({
           subtitle="Usulsüz kart kullanımı veya kaçak biniş durumunda resmi ceza kaydı oluşturun"
         >
           <form onSubmit={handleIssuePenalty} className="space-y-4">
-            <Input
+              <Input
               id="penalty-card-id"
               label="İhlal Yapan Kart ID"
               value={penaltyCardId}
               onChange={(e) => setPenaltyCardId(e.target.value)}
-              placeholder="Örn: CARD_TAM_001"
+                  placeholder="Örn: CARD_YOLCU_001"
               required
             />
 
@@ -161,7 +173,7 @@ export function InspectorPortal({
                 <label htmlFor="penalty-reason-select" className="label text-sm font-semibold mb-1 block">
                   İhlal Türü
                 </label>
-                <select
+                  <select
                   id="penalty-reason-select"
                   value={penaltyReason}
                   onChange={(e) => setPenaltyReason(e.target.value)}
@@ -170,6 +182,9 @@ export function InspectorPortal({
                   <option value="kartsiz_binis">Kartsız / Yetkisiz Biniş</option>
                   <option value="baskasinin_karti">Başkasına Ait Kart Kullanımı</option>
                   <option value="sahte_belge">Geçersiz İndirim Belgesi</option>
+                  <option value="usulsuz_kart_kullanimi">Usulsüz Kart Kullanımı</option>
+                  <option value="sahte_kart">Sahte / Değiştirilmiş Kart</option>
+                  <option value="diger">Diğer İhlal</option>
                 </select>
               </div>
             </div>

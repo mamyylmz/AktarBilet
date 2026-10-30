@@ -56,7 +56,7 @@ test.describe('Codex cost/optimization contract audit', () => {
     const response = await request.post(`${apiURL}/api/v1/optimization/approve`, {
       headers: { ...bearer(token), 'Idempotency-Key': `CODEX-PERSIST-IDEMP-${Date.now()}` },
       data: {
-        line_id: 'LINE_500T', current_headway_minutes: 15, target_headway_minutes: 8,
+        line_id: 'LINE_5', current_headway_minutes: 15, target_headway_minutes: 8,
         fleet_capacity: 75, vehicle_delta: 5, delta_cost_kurus: 5200000,
         projected_net_margin_kurus: 1400000, notes
       }
@@ -77,7 +77,7 @@ test.describe('Codex cost/optimization contract audit', () => {
     const response = await request.post(`${apiURL}/api/v1/optimization/approve`, {
       headers: { ...bearer(token), 'Idempotency-Key': `CODEX-DENY-IDEMP-${Date.now()}` },
       data: {
-        line_id: 'LINE_500T', current_headway_minutes: 15, target_headway_minutes: 8,
+        line_id: 'LINE_5', current_headway_minutes: 15, target_headway_minutes: 8,
         fleet_capacity: 75, vehicle_delta: 5, delta_cost_kurus: 5200000,
         projected_net_margin_kurus: 1400000, notes
       }
@@ -93,7 +93,7 @@ test.describe('Codex cost/optimization contract audit', () => {
     const notes = `CODEX-APPROVAL-RETRY-${Date.now()}`;
     const before = Number(scalar('SELECT COUNT(*) FROM jw_optimization_approvals'));
     const data = {
-      line_id: 'LINE_500T', current_headway_minutes: 15, target_headway_minutes: 8,
+      line_id: 'LINE_5', current_headway_minutes: 15, target_headway_minutes: 8,
       fleet_capacity: 75, vehicle_delta: 5, delta_cost_kurus: 5200000,
       projected_net_margin_kurus: 1400000, notes
     };
@@ -115,7 +115,7 @@ test.describe('Codex cost/optimization contract audit', () => {
     const response = await request.post(`${apiURL}/api/v1/optimization/approve`, {
       headers: { ...bearer(token), 'Idempotency-Key': `CODEX-INVALID-IDEMP-${Date.now()}` },
       data: {
-        line_id: 'LINE_500T', current_headway_minutes: -15, target_headway_minutes: -8,
+        line_id: 'LINE_5', current_headway_minutes: -15, target_headway_minutes: -8,
         fleet_capacity: -75, vehicle_delta: -5, delta_cost_kurus: -1,
         projected_net_margin_kurus: -1, notes
       }

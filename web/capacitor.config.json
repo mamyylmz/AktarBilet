@@ -1,0 +1,8 @@
+{
+  "appId": "com.aktarbilet.app",
+  "appName": "AktarBilet",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http"
+  }
+}

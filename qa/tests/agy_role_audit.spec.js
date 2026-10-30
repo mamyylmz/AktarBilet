@@ -144,7 +144,7 @@ test.describe('AGY Zero-Trust 7-Role E2E & Boundary Audit', () => {
     const simRes = await request.post(`${API_URL}/api/v1/optimization/headway-scenario`, {
       headers: { Authorization: `Bearer ${token}` },
       data: {
-        line_id: 'LINE_500T',
+        line_id: 'LINE_5',
         current_headway_minutes: 15,
         target_headway_minutes: 8,
         fleet_capacity_per_vehicle: 75,
@@ -229,7 +229,7 @@ test.describe('AGY Zero-Trust 7-Role E2E & Boundary Audit', () => {
       { method: 'post', url: `${API_URL}/api/v1/penalties`, data: { card_id: 'CARD_TAM_001', penalty_amount_kurus: 1000 } },
       { method: 'get', url: `${API_URL}/api/v1/anomalies` },
       { method: 'post', url: `${API_URL}/api/v1/settlements/close`, data: { period_name: 'TEST' } },
-      { method: 'post', url: `${API_URL}/api/v1/optimization/approve`, data: { line_id: 'LINE_500T' } }
+      { method: 'post', url: `${API_URL}/api/v1/optimization/approve`, data: { line_id: 'LINE_5' } }
     ];
 
     for (const attempt of forbiddenAttempts) {

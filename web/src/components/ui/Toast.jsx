@@ -22,23 +22,21 @@ export function Toast({
   if (type === 'warning') typeClass = 'toast-warning';
 
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      className={`toast-container ${typeClass}`}
-    >
-      <div className="toast-content">
-        <span>{message}</span>
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Bildirimi kapat"
-            className="toast-close-btn"
-          >
-            ✕
-          </button>
-        )}
+    <div className="toast-container">
+      <div role={type === 'error' ? 'alert' : 'status'} aria-live={type === 'error' ? 'assertive' : 'polite'} className={`toast ${typeClass}`}>
+        <div className="toast-content">
+          <span>{message}</span>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Bildirimi kapat"
+              className="toast-close-btn"
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

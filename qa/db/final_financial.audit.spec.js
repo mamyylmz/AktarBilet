@@ -27,7 +27,7 @@ function assertLedgerEquality(card) {
 function tap(request, card, sequence, key, tappedAt = new Date().toISOString()) {
   const body = JSON.stringify({
     validator_id: 'VAL_500T_01', sequence_no: sequence, card_id: card,
-    line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
+    line_id: 'LINE_5', station_id: 'STAT_ESHOT_10177', direction: 1,
     tapped_at: tappedAt
   });
   return request.post(`${apiURL}/api/v1/validators/tap`, {
@@ -109,7 +109,7 @@ test.describe('final audit PostgreSQL financial workflows', () => {
     const base = Number(suffix.slice(-10)) * 100;
     const payload = cards.map((card, i) => ({
       idempotency_key: `${card}-IDEMP`, validator_id: 'VAL_500T_01', sequence_no: base + i,
-      card_id: card, line_id: 'LINE_500T', station_id: 'STAT_AYRILIK', direction: 1,
+      card_id: card, line_id: 'LINE_5', station_id: 'STAT_ESHOT_10177', direction: 1,
       tapped_at: new Date(Date.now() + i).toISOString()
     }));
     const body = JSON.stringify(payload);

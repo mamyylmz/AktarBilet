@@ -11,6 +11,7 @@ export function HomePage({
   onRecharge,
   onTapTurnstile,
   rechargeLoading = false,
+  tapLoading = false,
   heatmapError = false,
   onFetchHeatmap,
 }) {
@@ -193,119 +194,6 @@ export function HomePage({
         </Card>
       </section>
 
-      {/* Demo Kiosk & Turnstile Simulator Section */}
-      <section className="demo-kiosk-section mt-8" data-testid="demo-kiosk-section">
-        <Card
-          title="Demo Kiosk ve Turnike Test Alanı"
-          subtitle="Kuruş hassasiyetli bakiye simülasyonu ve çevrimdışı validatör biniş testi"
-        >
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-            {/* Virtual Card */}
-            <div className="transit-virtual-card">
-              <div className="card-top-row flex justify-between items-center">
-                <span className="card-chip-icon" aria-hidden="true" />
-                <span className="card-type-badge font-mono uppercase">DEMO KART</span>
-              </div>
-              <div className="card-middle-row my-4">
-                <span className="card-balance-label text-xs uppercase tracking-wider text-white/80">Güncel Bakiye</span>
-                <div className="card-balance-value font-mono text-3xl font-bold text-white mt-1">
-                  {formatKurus(card?.balance_kurus !== undefined ? card.balance_kurus : 50000)}
-                </div>
-              </div>
-              <div className="card-bottom-row flex justify-between items-end text-xs text-white/90">
-                <div>
-                  <span className="block opacity-75">Kart Numarası</span>
-                  <span className="font-mono font-semibold">{card?.id || 'CARD_YOLCU_001'}</span>
-                </div>
-                <div>
-                  <span className="badge badge-success text-xs">Aktif</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Kiosk Controls */}
-            <div className="space-y-4">
-              <div>
-                <h4 className="font-semibold text-foreground mb-2">Kiosk Bakiye Yükleme</h4>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="primary"
-                    onClick={() => onRecharge && onRecharge(50)}
-                    disabled={rechargeLoading}
-                  >
-                    +50 TL Yükle
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => onRecharge && onRecharge(100)}
-                    disabled={rechargeLoading}
-                  >
-                    +100 TL Yükle
-                  </Button>
-                </div>
-              </div>
-
-              <div>
-                <h4 className="font-semibold text-foreground mb-2">Turnike Biniş Simülasyonu</h4>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="secondary"
-                    onClick={() => onTapTurnstile && onTapTurnstile('LINE_500T', '500T')}
-                  >
-                    500T (Halkapınar - Alsancak)
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() => onTapTurnstile && onTapTurnstile('LINE_14ES', '14ES')}
-                  >
-                    14ES (Fahrettin Altay - Konak)
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </Card>
-      </section>
-
-      {/* Transit Heatmap Diagnostic Section */}
-      <section className="heatmap-preview-section mt-8">
-        <Card
-          title="Hat ve Durak Doluluk Isı Haritası"
-          subtitle="İzmir genelindeki anlık biniş yoğunluk telemetrisi"
-        >
-          <div className="space-y-4">
-            <p className="text-sm text-muted">
-              Turnikelerden gelen anlık biniş verilerine dayalı hat yoğunluk durumunu görüntüleyin:
-            </p>
-            <Button
-              variant="outline"
-              onClick={async () => {
-                setHeatmapLoaded(true);
-                if (onFetchHeatmap) await onFetchHeatmap();
-              }}
-            >
-              Yoğunluk Raporunu Görüntüle
-            </Button>
-
-            {heatmapLoaded && heatmapError && (
-              <div className="p-4 bg-danger/10 border border-danger/30 rounded-lg text-danger text-sm" role="alert">
-                <p className="font-semibold mb-1">Sunucu bağlantı hatası oluştu</p>
-                <p>Yoğunluk verisi alınamadı, lütfen yeniden deneyiniz.</p>
-                <div className="mt-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onFetchHeatmap && onFetchHeatmap()}
-                  >
-                    Yeniden Dene
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        </Card>
-      </section>
-
       {/* FAQ Accordion */}
       <section className="faq-section mt-8">
         <Card
@@ -337,16 +225,6 @@ export function HomePage({
             })}
           </div>
         </Card>
-      </section>
-
-      {/* Informative Overview Box */}
-      <section className="cta-box mt-8">
-        <div className="cta-content text-center py-8">
-          <h2 className="cta-title">Yolculuğunuza Hemen Başlayın</h2>
-          <p className="cta-desc max-w-xl mx-auto text-muted">
-            AktarBilet hesabınıza yukarıdaki "Giriş Yap" butonu ile erişerek kart bakiyenizi sorgulayabilir, bakiye yükleyebilir ve binişlerinizi takip edebilirsiniz.
-          </p>
-        </div>
       </section>
     </div>
   );

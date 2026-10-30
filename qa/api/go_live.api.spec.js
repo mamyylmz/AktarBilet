@@ -3,7 +3,10 @@ import { test, expect } from '@playwright/test';
 import { apiURL } from '../helpers/http.js';
 
 const project = process.env.QA_PROJECT_NAME || 'aktarbilet-qa';
-const compose = ['compose', '--project-name', project, '--file', 'docker-compose.qa.yml'];
+const compose = [
+  'compose', '--project-name', project, '--file', 'docker-compose.qa.yml',
+  ...(process.env.QA_COMPOSE_OVERRIDE ? ['--file', process.env.QA_COMPOSE_OVERRIDE] : [])
+];
 
 function docker(...args) {
   return execFileSync('docker', [...compose, ...args], { cwd: process.cwd(), encoding: 'utf8' });
