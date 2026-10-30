@@ -344,12 +344,31 @@ func (m *mockSyncRows) Scan(dest ...any) error {
 	}
 	it := m.items[m.idx-1]
 	if len(dest) >= 6 {
-		*dest[0].(*string) = it.LineID
-		*dest[1].(*string) = it.StationID
-		*dest[2].(*int) = it.Direction
-		*dest[3].(*time.Time) = it.TappedAt
-		*dest[4].(*bool) = it.IsTransfer
-		*dest[5].(*int) = it.TransferLevel
+		if s, ok := dest[0].(*string); ok {
+			*s = it.LineID
+			*dest[1].(*string) = it.StationID
+			*dest[2].(*int) = it.Direction
+			*dest[3].(*time.Time) = it.TappedAt
+			*dest[4].(*bool) = it.IsTransfer
+			*dest[5].(*int) = it.TransferLevel
+		} else if u, ok := dest[0].(*uuid.UUID); ok {
+			*u = uuid.New()
+			if fare, ok := dest[1].(*domain.Kurus); ok {
+				*fare = 2000
+			}
+			if line, ok := dest[2].(*string); ok {
+				*line = it.LineID
+			}
+			if st, ok := dest[3].(*string); ok {
+				*st = it.StationID
+			}
+			if dir, ok := dest[4].(*int); ok {
+				*dir = it.Direction
+			}
+			if tap, ok := dest[5].(*time.Time); ok {
+				*tap = it.TappedAt
+			}
+		}
 	}
 	return nil
 }

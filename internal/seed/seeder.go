@@ -387,19 +387,28 @@ func SeedDatabaseWithExecutor(ctx context.Context, pool DBExecutor, authSvc *aut
 		}
 	}
 
-	// 7. Gelir Paylaşımı Dönemi (2026-EKIM Kapanmış Başlangıç Dönemi — T-4 Storno ve Reopen için)
+	// 7. Gelir Paylaşımı Dönemleri:
+	// - 2026-EYLUL: Geçmiş kapalı dönem (T-4 Storno ve denetim testleri için hazır)
+	// - 2026-EKIM: Aktif açık dönem (Kapanış -> Reopen yaşam döngüsü için hazır)
 	_, err = pool.Exec(ctx, `
 		INSERT INTO jw_settlement_periods (
 			id, period_name, start_date, end_date, is_closed, closed_at,
 			total_revenue_kurus, belediye_share_kurus, ozel_halk_share_kurus, created_at
-		) VALUES (
+		) VALUES 
+		(
+			'00000000-0000-0000-0000-000000000000', '2026-EYLUL',
+			NOW() - INTERVAL '60 days', NOW() - INTERVAL '30 days', true, NOW() - INTERVAL '30 days',
+			146860000, 85160000, 36900000, NOW() - INTERVAL '30 days'
+		),
+		(
 			'00000000-0000-0000-0000-000000000001', '2026-EKIM',
-			NOW() - INTERVAL '30 days', NOW(), true, NOW(),
+			NOW() - INTERVAL '30 days', NOW(), false, NULL,
 			146860000, 85160000, 36900000, NOW()
-		) ON CONFLICT (id) DO NOTHING
+		) ON CONFLICT (id) DO UPDATE SET
+			period_name = EXCLUDED.period_name;
 	`)
 	if err != nil {
-		slog.Warn("2026-EKIM settlement period seed uyarısı", "error", err)
+		slog.Warn("Settlement periods seed uyarısı", "error", err)
 	}
 
 	slog.Info("Otomatik seed başarıyla tamamlandı.")

@@ -17,10 +17,6 @@ import (
 	"github.com/mamyylmz/AktarBilet/internal/pricing"
 )
 
-var (
-	ErrDuplicateEvent = errors.New("mükerrer validatör olayı (idempotent)")
-)
-
 type SyncDBPool interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
@@ -217,12 +213,7 @@ func (s *SyncService) ingestPersistent(ctx context.Context, pool SyncDBPool, req
 
 	// 5.1 Sırasız Olay Uzlaşması (Out-of-Order Delivery Reconciliation / CORE-04)
 	if pool != nil {
-		var futureEvID uuid.UUID
-		var futureFare domain.Kurus
-		var futureLineID, futureStationID string
-		var futureDirection int
-		var futureTappedAt time.Time
-		errFuture := pool.QueryRow(ctx, `
+		rowsFuture, errFuture := pool.Query(ctx, `
 			SELECT id, fare_charged_kurus, line_id, station_id, direction, tapped_at
 			FROM jw_validator_events
 			WHERE card_id = $1
@@ -230,49 +221,82 @@ func (s *SyncService) ingestPersistent(ctx context.Context, pool SyncDBPool, req
 			  AND tapped_at <= ($2::timestamptz + INTERVAL '90 minutes')
 			  AND status = 'PROCESSED'
 			ORDER BY tapped_at ASC
-			LIMIT 1
-		`, req.CardID, req.TappedAt).Scan(
-			&futureEvID, &futureFare, &futureLineID, &futureStationID, &futureDirection, &futureTappedAt,
-		)
+		`, req.CardID, req.TappedAt)
 		if errFuture == nil {
-			chronologicalHistory := append([]pricing.TripHistoryItem{}, history...)
-			chronologicalHistory = append(chronologicalHistory, pricing.TripHistoryItem{
-				LineID:        req.LineID,
-				StationID:     req.StationID,
-				Direction:     req.Direction,
-				TappedAt:      req.TappedAt,
-				IsTransfer:    calcRes.IsTransfer,
-				TransferLevel: calcRes.TransferLevel,
-			})
-
-			futureCard := card
-			futureCard.MonthlyCappingSpent = card.MonthlyCappingSpent - futureFare + calcRes.FareChargedKurus
-			if futureCard.MonthlyCappingSpent < 0 {
-				futureCard.MonthlyCappingSpent = 0
+			type futureEventItem struct {
+				id        uuid.UUID
+				fare      domain.Kurus
+				lineID    string
+				stationID string
+				direction int
+				tappedAt  time.Time
 			}
-			futureCalc := s.pricingEngine.CalculateFare(
-				futureCard, tariff, futureLineID, futureStationID, futureDirection, futureTappedAt, chronologicalHistory,
-			)
-			correction := futureFare - futureCalc.FareChargedKurus
-			if correction != 0 {
-				ref := fmt.Sprintf("OOO-REPRICE:%s", futureEvID)
-				if _, err := s.ledgerService.StornoCorrection(ctx, req.CardID, correction, ref, "Sırasız olay kronolojik ücret uzlaşması"); err != nil && !errors.Is(err, ledger.ErrIdempotencyConflict) {
-					return nil, fmt.Errorf("sırasız olay defter uzlaşması başarısız: %w", err)
+			var futureEvents []futureEventItem
+			for rowsFuture.Next() {
+				var fe futureEventItem
+				if err := rowsFuture.Scan(&fe.id, &fe.fare, &fe.lineID, &fe.stationID, &fe.direction, &fe.tappedAt); err == nil {
+					futureEvents = append(futureEvents, fe)
 				}
 			}
-			if _, err := pool.Exec(ctx, `
-				UPDATE jw_validator_events
-				SET is_transfer = $1, transfer_level = $2, fare_charged_kurus = $3
-				WHERE id = $4
-			`, futureCalc.IsTransfer, futureCalc.TransferLevel, futureCalc.FareChargedKurus, futureEvID); err != nil {
-				return nil, fmt.Errorf("sırasız olay kaydı uzlaştırılamadı: %w", err)
-			}
-			if correction != 0 {
-				_, _ = pool.Exec(ctx, `
-					UPDATE jw_cards
-					SET monthly_capping_spent_kurus = GREATEST(0, monthly_capping_spent_kurus - $1 + $2)
-					WHERE id = $3
-				`, futureFare, futureCalc.FareChargedKurus, req.CardID)
+			rowsFuture.Close()
+
+			if len(futureEvents) > 0 {
+				chronologicalHistory := append([]pricing.TripHistoryItem{}, history...)
+				chronologicalHistory = append(chronologicalHistory, pricing.TripHistoryItem{
+					LineID:        req.LineID,
+					StationID:     req.StationID,
+					Direction:     req.Direction,
+					TappedAt:      req.TappedAt,
+					IsTransfer:    calcRes.IsTransfer,
+					TransferLevel: calcRes.TransferLevel,
+				})
+
+				runningSpent := card.MonthlyCappingSpent + calcRes.FareChargedKurus
+
+				for _, fe := range futureEvents {
+					evalCard := card
+					evalCard.MonthlyCappingSpent = runningSpent
+					if evalCard.MonthlyCappingSpent < 0 {
+						evalCard.MonthlyCappingSpent = 0
+					}
+
+					futureCalc := s.pricingEngine.CalculateFare(
+						evalCard, tariff, fe.lineID, fe.stationID, fe.direction, fe.tappedAt, chronologicalHistory,
+					)
+					correction := fe.fare - futureCalc.FareChargedKurus
+					if correction != 0 {
+						ref := fmt.Sprintf("OOO-REPRICE:%s", fe.id)
+						if _, err := s.ledgerService.StornoCorrection(ctx, req.CardID, correction, ref, "Sırasız olay kronolojik ücret uzlaşması"); err != nil && !errors.Is(err, ledger.ErrIdempotencyConflict) {
+							return nil, fmt.Errorf("sırasız olay defter uzlaşması başarısız: %w", err)
+						}
+						_, _ = pool.Exec(ctx, `
+							UPDATE jw_cards
+							SET monthly_capping_spent_kurus = GREATEST(0, monthly_capping_spent_kurus - $1 + $2)
+							WHERE id = $3
+						`, fe.fare, futureCalc.FareChargedKurus, req.CardID)
+					}
+					if _, err := pool.Exec(ctx, `
+						UPDATE jw_validator_events
+						SET is_transfer = $1, transfer_level = $2, fare_charged_kurus = $3
+						WHERE id = $4
+					`, futureCalc.IsTransfer, futureCalc.TransferLevel, futureCalc.FareChargedKurus, fe.id); err != nil {
+						return nil, fmt.Errorf("sırasız olay kaydı uzlaştırılamadı: %w", err)
+					}
+
+					runningSpent = runningSpent - fe.fare + futureCalc.FareChargedKurus
+					if runningSpent < 0 {
+						runningSpent = 0
+					}
+
+					chronologicalHistory = append(chronologicalHistory, pricing.TripHistoryItem{
+						LineID:        fe.lineID,
+						StationID:     fe.stationID,
+						Direction:     fe.direction,
+						TappedAt:      fe.tappedAt,
+						IsTransfer:    futureCalc.IsTransfer,
+						TransferLevel: futureCalc.TransferLevel,
+					})
+				}
 			}
 		}
 	}

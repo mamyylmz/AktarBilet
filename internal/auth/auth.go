@@ -48,7 +48,7 @@ func (s *AuthService) CheckPassword(hash, password string) bool {
 }
 
 func (s *AuthService) GenerateTokens(user *domain.User) (string, string, error) {
-	// Access Token: 15 dakika
+	// Access Token: 24 saat (Denetim ve test oturum sürekliliği)
 	accessClaims := &Claims{
 		UserID:    user.ID,
 		Email:     user.Email,
@@ -57,7 +57,7 @@ func (s *AuthService) GenerateTokens(user *domain.User) (string, string, error) 
 		Roles:     user.Roles,
 		TokenType: "access",
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Subject:   user.ID.String(),
 		},

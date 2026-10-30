@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	gosync "sync"
 	"time"
 
@@ -957,11 +959,21 @@ func (h *APIHandler) ListSettlements(w http.ResponseWriter, r *http.Request) {
 	periodName := "2026-EKIM"
 	isClosed := false
 	var closedAt *time.Time
+	periodUUID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 
 	if h.pool != nil {
 		_ = h.pool.QueryRow(r.Context(), `
 			SELECT is_closed, closed_at FROM jw_settlement_periods WHERE period_name = $1
 		`, periodName).Scan(&isClosed, &closedAt)
+	} else if h.settleSvc != nil {
+		p, err := h.settleSvc.GetPeriod(periodUUID)
+		if err != nil {
+			p = h.settleSvc.EnsurePeriod(periodUUID, periodName, time.Now().Add(-30*24*time.Hour), time.Now())
+		}
+		if p != nil {
+			isClosed = p.IsClosed
+			closedAt = p.ClosedAt
+		}
 	}
 
 	shares := []OperatorShare{
@@ -1103,6 +1115,10 @@ func (h *APIHandler) CloseSettlementPeriod(w http.ResponseWriter, r *http.Reques
 			VALUES ($1, 'SETTLEMENT_CLOSE', 'jw_settlement_periods', $2, json_build_object('is_closed', true, 'closed_at', $3)::jsonb, NOW())
 		`, closedBy, pID.String(), now)
 
+		if h.settleSvc != nil {
+			_, _ = h.settleSvc.ClosePeriod(pID)
+		}
+
 		WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"id":        pID,
 			"is_closed": true,
@@ -1203,6 +1219,7 @@ func (h *APIHandler) ReopenSettlementPeriod(w http.ResponseWriter, r *http.Reque
 
 	periodID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	if h.settleSvc != nil {
+		h.settleSvc.EnsurePeriod(periodID, req.PeriodName, time.Now().Add(-30*24*time.Hour), time.Now())
 		_, _ = h.settleSvc.ReopenPeriod(periodID)
 	}
 
@@ -1269,14 +1286,14 @@ func (h *APIHandler) StornoSettlement(w http.ResponseWriter, r *http.Request) {
 			// ID ile bulunamadıysa 2026-EKIM dönem adıyla ara
 			err = h.pool.QueryRow(r.Context(), "SELECT id, is_closed FROM jw_settlement_periods WHERE period_name = '2026-EKIM'").Scan(&pID, &isClosed)
 			if err != nil {
-				// İlk kurulum / sıfırlama güvenliği: 2026-EKIM kapatılmış dönemini oluştur
+				// İlk kurulum / sıfırlama güvenliği: 2026-EKIM dönemini oluştur
 				pID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
 				_, _ = h.pool.Exec(r.Context(), `
 					INSERT INTO jw_settlement_periods (id, period_name, start_date, end_date, is_closed, closed_at)
-					VALUES ($1, '2026-EKIM', NOW() - INTERVAL '30 days', NOW(), true, NOW())
-					ON CONFLICT (id) DO UPDATE SET is_closed = true
+					VALUES ($1, '2026-EKIM', NOW() - INTERVAL '30 days', NOW(), false, NULL)
+					ON CONFLICT (id) DO NOTHING
 				`, pID)
-				isClosed = true
+				isClosed = false
 			}
 		}
 		if !isClosed {
@@ -1345,6 +1362,14 @@ func (h *APIHandler) StornoSettlement(w http.ResponseWriter, r *http.Request) {
 
 	entry, err := h.settleSvc.RecordStornoAfterClose(pID, nil, req.Operator, req.Amount, req.Reason)
 	if err != nil {
+		if errors.Is(err, settlement.ErrPeriodNotClosed) {
+			WriteError(w, http.StatusBadRequest, "PERIOD_NOT_CLOSED", "Storno yalnızca kapatılmış dönemlere uygulanabilir. Lütfen önce dönemi kapatınız.")
+			return
+		}
+		if errors.Is(err, settlement.ErrPeriodNotFound) {
+			WriteError(w, http.StatusNotFound, "PERIOD_NOT_FOUND", "Dönem bulunamadı")
+			return
+		}
 		WriteError(w, http.StatusInternalServerError, "STORNO_ERROR", err.Error())
 		return
 	}
@@ -1438,23 +1463,112 @@ func (h *APIHandler) CreatePenalty(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusCreated, penalty)
 }
 
+func encodeCursor(t time.Time, id uuid.UUID) string {
+	raw := fmt.Sprintf("%s_%s", t.UTC().Format(time.RFC3339Nano), id.String())
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+func decodeCursor(cursor string) (time.Time, uuid.UUID, bool) {
+	if cursor == "" {
+		return time.Time{}, uuid.Nil, false
+	}
+	raw := cursor
+	if decoded, err := base64.RawURLEncoding.DecodeString(cursor); err == nil {
+		raw = string(decoded)
+	}
+	parts := strings.Split(raw, "_")
+	if len(parts) == 2 {
+		t, err1 := time.Parse(time.RFC3339Nano, parts[0])
+		id, err2 := uuid.Parse(parts[1])
+		if err1 == nil && err2 == nil {
+			return t, id, true
+		}
+	}
+	return time.Time{}, uuid.Nil, false
+}
+
 func (h *APIHandler) ListPenalties(w http.ResponseWriter, r *http.Request) {
+	limitStr := r.URL.Query().Get("limit")
+	cursor := r.URL.Query().Get("cursor")
+	limit := 50
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			if l > 100 {
+				l = 100
+			}
+			limit = l
+		}
+	}
+
+	cursorTime, cursorID, hasCursor := decodeCursor(cursor)
+
 	if h.pool == nil {
 		h.memMu.RLock()
-		res := make([]domain.Penalty, len(h.memPenalties))
-		copy(res, h.memPenalties)
+		all := make([]domain.Penalty, len(h.memPenalties))
+		copy(all, h.memPenalties)
 		h.memMu.RUnlock()
-		WriteJSON(w, http.StatusOK, res)
+
+		startIndex := 0
+		if hasCursor {
+			for i, p := range all {
+				if p.ID == cursorID || p.IssuedAt.Equal(cursorTime) {
+					startIndex = i + 1
+					break
+				}
+			}
+		}
+		endIndex := startIndex + limit
+		if endIndex > len(all) {
+			endIndex = len(all)
+		}
+
+		var page []domain.Penalty
+		if startIndex < len(all) {
+			page = all[startIndex:endIndex]
+		} else {
+			page = []domain.Penalty{}
+		}
+
+		if endIndex < len(all) && len(page) > 0 {
+			last := page[len(page)-1]
+			w.Header().Set("X-Next-Cursor", encodeCursor(last.IssuedAt, last.ID))
+			w.Header().Set("X-Has-More", "true")
+		} else {
+			w.Header().Set("X-Has-More", "false")
+		}
+
+		if cursor == "" && limitStr == "" {
+			WriteJSON(w, http.StatusOK, all)
+			return
+		}
+		WriteJSON(w, http.StatusOK, page)
 		return
 	}
 
-	rows, err := h.pool.Query(r.Context(), `
-		SELECT id, inspector_id, card_id, COALESCE(line_id, ''), COALESCE(station_id, ''),
-		       penalty_amount_kurus, reason, issued_at, COALESCE(notes, '')
-		FROM jw_penalties
-		ORDER BY issued_at DESC
-		LIMIT 100
-	`)
+	var rows pgx.Rows
+	var err error
+	if hasCursor {
+		rows, err = h.pool.Query(r.Context(), `
+			SELECT id, inspector_id, card_id, COALESCE(line_id, ''), COALESCE(station_id, ''),
+			       penalty_amount_kurus, reason, issued_at, COALESCE(notes, '')
+			FROM jw_penalties
+			WHERE (issued_at, id) < ($1, $2)
+			ORDER BY issued_at DESC, id DESC
+			LIMIT $3
+		`, cursorTime, cursorID, limit)
+	} else {
+		fetchLimit := limit
+		if cursor == "" && limitStr == "" {
+			fetchLimit = 100
+		}
+		rows, err = h.pool.Query(r.Context(), `
+			SELECT id, inspector_id, card_id, COALESCE(line_id, ''), COALESCE(station_id, ''),
+			       penalty_amount_kurus, reason, issued_at, COALESCE(notes, '')
+			FROM jw_penalties
+			ORDER BY issued_at DESC, id DESC
+			LIMIT $1
+		`, fetchLimit)
+	}
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
 		return
@@ -1468,6 +1582,15 @@ func (h *APIHandler) ListPenalties(w http.ResponseWriter, r *http.Request) {
 			penalties = append(penalties, p)
 		}
 	}
+
+	if len(penalties) == limit && len(penalties) > 0 {
+		last := penalties[len(penalties)-1]
+		w.Header().Set("X-Next-Cursor", encodeCursor(last.IssuedAt, last.ID))
+		w.Header().Set("X-Has-More", "true")
+	} else {
+		w.Header().Set("X-Has-More", "false")
+	}
+
 	WriteJSON(w, http.StatusOK, penalties)
 }
 
@@ -1528,7 +1651,55 @@ func (h *APIHandler) GetHeatmap(w http.ResponseWriter, r *http.Request) {
 
 func (h *APIHandler) GetAnomalies(w http.ResponseWriter, r *http.Request) {
 	anoms := h.anomalyDet.GetAnomalies()
-	WriteJSON(w, http.StatusOK, anoms)
+
+	limitStr := r.URL.Query().Get("limit")
+	cursor := r.URL.Query().Get("cursor")
+	if cursor == "" && limitStr == "" {
+		WriteJSON(w, http.StatusOK, anoms)
+		return
+	}
+
+	limit := 50
+	if limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			if l > 100 {
+				l = 100
+			}
+			limit = l
+		}
+	}
+
+	startIndex := 0
+	if cursor != "" {
+		for i, a := range anoms {
+			if a.ID.String() == cursor || a.DetectedAt.Format(time.RFC3339Nano) == cursor {
+				startIndex = i + 1
+				break
+			}
+		}
+	}
+
+	endIndex := startIndex + limit
+	if endIndex > len(anoms) {
+		endIndex = len(anoms)
+	}
+
+	var page []domain.Anomaly
+	if startIndex < len(anoms) {
+		page = anoms[startIndex:endIndex]
+	} else {
+		page = []domain.Anomaly{}
+	}
+
+	if endIndex < len(anoms) && len(page) > 0 {
+		last := page[len(page)-1]
+		w.Header().Set("X-Next-Cursor", last.ID.String())
+		w.Header().Set("X-Has-More", "true")
+	} else {
+		w.Header().Set("X-Has-More", "false")
+	}
+
+	WriteJSON(w, http.StatusOK, page)
 }
 
 // 9. Bonus 3: Tarife Değişikliği Etki Simülasyonu

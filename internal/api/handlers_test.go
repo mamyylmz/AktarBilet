@@ -1380,3 +1380,157 @@ func TestAPI_ExtendedCoverage_Endpoints(t *testing.T) {
 		t.Fatalf("Cihaz imzasız BatchSyncValidators 401 dönmeli, alınan: %d", w.Code)
 	}
 }
+
+func TestAPI_SettlementLifecycle_Full(t *testing.T) {
+	rig := setupTestRig()
+
+	// 1. Initial State: 2026-EKIM is OPEN
+	reqList := httptest.NewRequest("GET", "/api/v1/settlements", nil)
+	reqList.Header.Set("Authorization", "Bearer "+rig.token(rig.muhasebe))
+	wList := httptest.NewRecorder()
+	rig.router.ServeHTTP(wList, reqList)
+	if wList.Code != http.StatusOK {
+		t.Fatalf("GET /settlements 200 dönmeli, alınan: %d", wList.Code)
+	}
+	var sumResp struct {
+		IsClosed bool `json:"is_closed"`
+	}
+	_ = json.Unmarshal(wList.Body.Bytes(), &sumResp)
+	if sumResp.IsClosed {
+		t.Fatalf("Başlangıçta 2026-EKIM dönemi açık olmalı, is_closed=true geldi")
+	}
+
+	// 2. Storno on OPEN period must fail with 400 PERIOD_NOT_CLOSED
+	stornoBody, _ := json.Marshal(map[string]interface{}{
+		"period_id":    "00000000-0000-0000-0000-000000000001",
+		"operator":     "ozel_halk",
+		"amount_kurus": -1000,
+		"reason":       "Erken storno denemesi",
+	})
+	reqStornoFail := httptest.NewRequest("POST", "/api/v1/settlements/storno", bytes.NewReader(stornoBody))
+	reqStornoFail.Header.Set("Authorization", "Bearer "+rig.token(rig.muhasebe))
+	wStornoFail := httptest.NewRecorder()
+	rig.router.ServeHTTP(wStornoFail, reqStornoFail)
+	if wStornoFail.Code != http.StatusBadRequest {
+		t.Fatalf("Açık döneme storno 400 dönmeli, alınan: %d (%s)", wStornoFail.Code, wStornoFail.Body.String())
+	}
+
+	// 3. Close Period (OPEN -> CLOSED)
+	closeBody, _ := json.Marshal(map[string]interface{}{
+		"period_id":   "00000000-0000-0000-0000-000000000001",
+		"period_name": "2026-EKIM",
+	})
+	reqClose := httptest.NewRequest("POST", "/api/v1/settlements/close", bytes.NewReader(closeBody))
+	reqClose.Header.Set("Authorization", "Bearer "+rig.token(rig.muhasebe))
+	wClose := httptest.NewRecorder()
+	rig.router.ServeHTTP(wClose, reqClose)
+	if wClose.Code != http.StatusOK {
+		t.Fatalf("Dönem kapatma 200 dönmeli, alınan: %d (%s)", wClose.Code, wClose.Body.String())
+	}
+
+	// 4. Verify ListSettlements returns is_closed: true
+	reqList2 := httptest.NewRequest("GET", "/api/v1/settlements", nil)
+	reqList2.Header.Set("Authorization", "Bearer "+rig.token(rig.muhasebe))
+	wList2 := httptest.NewRecorder()
+	rig.router.ServeHTTP(wList2, reqList2)
+	_ = json.Unmarshal(wList2.Body.Bytes(), &sumResp)
+	if !sumResp.IsClosed {
+		t.Fatalf("Kapatma sonrası is_closed=true olmalı, false geldi")
+	}
+
+	// 5. Storno on CLOSED period succeeds
+	reqStornoOk := httptest.NewRequest("POST", "/api/v1/settlements/storno", bytes.NewReader(stornoBody))
+	reqStornoOk.Header.Set("Authorization", "Bearer "+rig.token(rig.muhasebe))
+	wStornoOk := httptest.NewRecorder()
+	rig.router.ServeHTTP(wStornoOk, reqStornoOk)
+	if wStornoOk.Code != http.StatusOK {
+		t.Fatalf("Kapalı döneme storno 200 dönmeli, alınan: %d (%s)", wStornoOk.Code, wStornoOk.Body.String())
+	}
+
+	// 6. Unauthorized Reopen (e.g. Yolcu) -> 403 Forbidden
+	reopenBody, _ := json.Marshal(map[string]interface{}{
+		"period_name": "2026-EKIM",
+		"reason":      "Yetkisiz deneme",
+	})
+	reqReopenYolcu := httptest.NewRequest("POST", "/api/v1/settlements/reopen", bytes.NewReader(reopenBody))
+	reqReopenYolcu.Header.Set("Authorization", "Bearer "+rig.token(rig.yolcuUser))
+	wReopenYolcu := httptest.NewRecorder()
+	rig.router.ServeHTTP(wReopenYolcu, reqReopenYolcu)
+	if wReopenYolcu.Code != http.StatusForbidden {
+		t.Fatalf("Yolcu rolüyle reopen 403 dönmeli, alınan: %d", wReopenYolcu.Code)
+	}
+
+	// 7. Authorized Reopen (Admin / Muhasebe) -> 200 OK (CLOSED -> OPEN)
+	reqReopenAdmin := httptest.NewRequest("POST", "/api/v1/settlements/reopen", bytes.NewReader(reopenBody))
+	reqReopenAdmin.Header.Set("Authorization", "Bearer "+rig.token(rig.adminUser))
+	wReopenAdmin := httptest.NewRecorder()
+	rig.router.ServeHTTP(wReopenAdmin, reqReopenAdmin)
+	if wReopenAdmin.Code != http.StatusOK {
+		t.Fatalf("Admin rolüyle reopen 200 dönmeli, alınan: %d (%s)", wReopenAdmin.Code, wReopenAdmin.Body.String())
+	}
+
+	// 8. Verify ListSettlements returns is_closed: false after reopen
+	reqList3 := httptest.NewRequest("GET", "/api/v1/settlements", nil)
+	reqList3.Header.Set("Authorization", "Bearer "+rig.token(rig.muhasebe))
+	wList3 := httptest.NewRecorder()
+	rig.router.ServeHTTP(wList3, reqList3)
+	_ = json.Unmarshal(wList3.Body.Bytes(), &sumResp)
+	if sumResp.IsClosed {
+		t.Fatalf("Yeniden açma sonrası is_closed=false olmalı, true geldi")
+	}
+}
+
+func TestAPI_KeysetPagination(t *testing.T) {
+	rig := setupTestRig()
+
+	// Seed 3 penalties in memory
+	for i := 0; i < 3; i++ {
+		penBody, _ := json.Marshal(map[string]interface{}{
+			"card_id":              fmt.Sprintf("CARD_PEN_%d", i),
+			"penalty_amount_kurus": 5000,
+			"reason":               "kartsiz_binis",
+			"notes":                fmt.Sprintf("Ceza %d", i),
+		})
+		reqPen := httptest.NewRequest("POST", "/api/v1/penalties", bytes.NewReader(penBody))
+		reqPen.Header.Set("Authorization", "Bearer "+rig.token(rig.kontrolor))
+		wPen := httptest.NewRecorder()
+		rig.router.ServeHTTP(wPen, reqPen)
+	}
+
+	// 1. First page: limit = 2
+	reqPage1 := httptest.NewRequest("GET", "/api/v1/penalties?limit=2", nil)
+	reqPage1.Header.Set("Authorization", "Bearer "+rig.token(rig.kontrolor))
+	wPage1 := httptest.NewRecorder()
+	rig.router.ServeHTTP(wPage1, reqPage1)
+	if wPage1.Code != http.StatusOK {
+		t.Fatalf("Sayfa 1 200 dönmeli, alınan: %d", wPage1.Code)
+	}
+	nextCursor := wPage1.Header().Get("X-Next-Cursor")
+	hasMore := wPage1.Header().Get("X-Has-More")
+	if nextCursor == "" || hasMore != "true" {
+		t.Fatalf("Beklenen X-Next-Cursor ve X-Has-More: true, alınan cursor=%s, hasMore=%s", nextCursor, hasMore)
+	}
+
+	// 2. Second page with cursor
+	reqPage2 := httptest.NewRequest("GET", "/api/v1/penalties?limit=2&cursor="+nextCursor, nil)
+	reqPage2.Header.Set("Authorization", "Bearer "+rig.token(rig.kontrolor))
+	wPage2 := httptest.NewRecorder()
+	rig.router.ServeHTTP(wPage2, reqPage2)
+	if wPage2.Code != http.StatusOK {
+		t.Fatalf("Sayfa 2 200 dönmeli, alınan: %d", wPage2.Code)
+	}
+	var p2 []domain.Penalty
+	_ = json.Unmarshal(wPage2.Body.Bytes(), &p2)
+	if len(p2) != 1 {
+		t.Fatalf("Sayfa 2'de kalan 1 ceza olmalı, alınan: %d", len(p2))
+	}
+
+	// 3. Anomalies pagination test
+	reqAnom := httptest.NewRequest("GET", "/api/v1/anomalies?limit=1", nil)
+	reqAnom.Header.Set("Authorization", "Bearer "+rig.token(rig.operasyon))
+	wAnom := httptest.NewRecorder()
+	rig.router.ServeHTTP(wAnom, reqAnom)
+	if wAnom.Code != http.StatusOK {
+		t.Fatalf("Anomalies pagination 200 dönmeli, alınan: %d", wAnom.Code)
+	}
+}
