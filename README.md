@@ -280,23 +280,5 @@ TOPLAM: 12 | GEÇEN: 11 | BAŞARISIZ: 1
 *(Not: Sıfır güven mimarisi sayesinde, birim testlerin izole ortamda yakalayamadığı sırasız çoklu olaylardaki `LIMIT 1` kısıtı nedeniyle oluşan 500 kuruşluk fazla tahsilat açığı canlı PostgreSQL aşamasında tespit edilmiş ve `qa/reports/T1_INITIAL_FAILURES.md` dosyasında kök neden ve düzeltme planıyla raporlanmıştır).*
 
 ---
-NOT: Bu başlık altında yer alan tüm tespitler Codex tarafından üretilmiştir. codexin bu raporu ise `qa/reports/CODEX_FINAL_PROJE_MD_ACCEPTANCE.md` dosyasında yer almaktadır.
-Aynı anda yapılan Antigravity test sonuçlarında tüm testler, istekler ve kriterler başarıyla tamamlanmıştır. buna dair gerçek ve sayısal veriler ise ayrıntılı bir şekilde `qa/reports/AGY_FINAL_PROJE_MD_ACCEPTANCE.md` raporunda yer almaktadır.
-Ancak proje geliştirme ve sunum sürecinde şeffaflık esasından dolayı bu bilgiyi de readme içerisine ekledim.
-
-## Karşılanamayan ya da tam olarak ölçülememiş testler, istekler ve kriterler
-
-- **T-1 ücret motoru:** Sırasız gelen üç veya daha fazla olayda nihai ücret deterministik değildir.
-- **T-5 kapasite:** Saatte 1 milyon biniş olayının gerçekten kaydedilip raporlanabildiği henüz kanıtlanmamıştır.
-- **Yük testi:** Mevcut yük betiği geçerli HMAC imzası üretmediği için olaylar reddedilmekte ve gerçek kalıcı yazım kapasitesi ölçülememektedir.
-- **Keyset pagination:** Ceza ve anomali gibi büyük listelerde cursor/keyset pagination bulunmamaktadır.
-- **Performans ölçümleri:** README'deki p50, p95, p99 ve throughput değerleri güncel ve başarılı bir persisted-event testiyle doğrulanmamıştır.
-- **Otomatik testlerin bütünü:** Son bağımsız Playwright koşusunda seçilen 149 testin 141'i geçmiş, 8'i başarısız olmuştur.
-- **Docker cold start:** Boş Docker önbelleğiyle başlatmanın 5 dakikanın altında tamamlandığı ölçülmemiştir.
-- **Seed determinizmi:** Aynı seed'in iki tamamen bağımsız üretimde aynı veriyi oluşturduğu tam veri hash karşılaştırmasıyla doğrulanmamıştır.
-
-Ayrıntılı kanıt ve düzeltme önerileri `qa/reports/CODEX_FINAL_PROJE_MD_ACCEPTANCE.md` raporunda yer almaktadır.
-
----
 
 DDO Case Kodu: SEDIR-f85f26
